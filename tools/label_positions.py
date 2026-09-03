@@ -8,15 +8,21 @@ import json
 import random
 import subprocess
 from pathlib import Path
-from typing import TextIO, cast
+from typing import TextIO, TypedDict, cast
 
 import chess
+
+
+class Candidate(TypedDict):
+    rank: int
+    move: str
+    score_cp: int
 
 
 class UciTeacher:
     """Minimal offline-only UCI client; this module is never included in submissions."""
 
-    def __init__(self, executable: Path, hash_mb: int) -> None:
+    def __init__(self, executable: Path, hash_mb: int, multipv: int) -> None:
         self.process = subprocess.Popen(
             [str(executable)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1
         )
@@ -35,6 +41,7 @@ class UciTeacher:
             raise RuntimeError("teacher exited before uciok")
         self._send("setoption name Threads value 1")
         self._send(f"setoption name Hash value {hash_mb}")
+        self._send(f"setoption name MultiPV value {multipv}")
         self._send("isready")
         self._wait_for("readyok")
 
@@ -48,12 +55,15 @@ class UciTeacher:
                 return
         raise RuntimeError(f"teacher exited before {token}")
 
-    def analyze(self, board: chess.Board, depth: int) -> tuple[int, str, int]:
+    def analyze(
+        self, board: chess.Board, depth: int
+    ) -> tuple[int, str, int, list[Candidate]]:
         self._send(f"position fen {board.fen()}")
         self._send(f"go depth {depth}")
         score = 0
         nodes = 0
         bestmove = "0000"
+        candidates: dict[int, tuple[int, str]] = {}
         for line in self.stdout:
             fields = line.split()
             if fields[:1] == ["info"] and "score" in fields:
@@ -64,9 +74,17 @@ class UciTeacher:
                     score = 2_000 if int(fields[index + 2]) > 0 else -2_000
                 if "nodes" in fields:
                     nodes = int(fields[fields.index("nodes") + 1])
+                rank = int(fields[fields.index("multipv") + 1]) if "multipv" in fields else 1
+                if "pv" in fields:
+                    candidates[rank] = (score, fields[fields.index("pv") + 1])
             if fields[:1] == ["bestmove"]:
                 bestmove = fields[1]
-                return score, bestmove, nodes
+                ranked: list[Candidate] = [
+                    {"rank": rank, "move": move, "score_cp": candidate_score}
+                    for rank, (candidate_score, move) in sorted(candidates.items())
+                ]
+                principal_score = ranked[0]["score_cp"] if ranked else score
+                return principal_score, bestmove, nodes, ranked
         raise RuntimeError("teacher exited during analysis")
 
     def close(self) -> None:
@@ -109,6 +127,7 @@ def main() -> None:
     parser.add_argument("--max-ply", type=int, default=100)
     parser.add_argument("--hash-mb", type=int, default=64)
     parser.add_argument("--max-abs-score", type=int, default=1_000)
+    parser.add_argument("--multipv", type=int, default=3)
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
@@ -119,7 +138,7 @@ def main() -> None:
     digest = hashlib.sha256()
     with (
         args.output.open("w", encoding="utf-8") as destination,
-        UciTeacher(args.stockfish.resolve(), args.hash_mb) as teacher,
+        UciTeacher(args.stockfish.resolve(), args.hash_mb, args.multipv) as teacher,
     ):
         while accepted < args.positions:
             board = random_position(rng, args.min_ply, args.max_ply)
@@ -127,7 +146,7 @@ def main() -> None:
             if key in seen:
                 continue
             seen.add(key)
-            score, bestmove, nodes = teacher.analyze(board, args.depth)
+            score, bestmove, nodes, candidates = teacher.analyze(board, args.depth)
             attempted += 1
             if abs(score) > args.max_abs_score:
                 continue
@@ -136,6 +155,7 @@ def main() -> None:
                 "score_cp": score,
                 "bestmove": bestmove,
                 "teacher_nodes": nodes,
+                "candidates": candidates,
             }
             line = json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n"
             destination.write(line)
@@ -154,6 +174,7 @@ def main() -> None:
         "positions_accepted": accepted,
         "teacher_calls": attempted,
         "max_abs_score": args.max_abs_score,
+        "multipv": args.multipv,
         "sha256": digest.hexdigest(),
     }
     args.output.with_suffix(args.output.suffix + ".manifest.json").write_text(

@@ -55,6 +55,27 @@ def load_examples(path: Path, score_limit: int) -> list[Example]:
         split = int.from_bytes(digest, "little") % 10
         baseline = evaluate(board) * (1.0 if board.turn else -1.0)
         examples.append(Example(features(board), float(white_score), baseline, split))
+        for candidate in record.get("candidates", []):
+            move = chess.Move.from_uci(candidate["move"])
+            if move not in board.legal_moves:
+                continue
+            candidate_score = max(
+                -score_limit, min(score_limit, int(candidate["score_cp"]))
+            )
+            candidate_white_score = candidate_score if board.turn else -candidate_score
+            board.push(move)
+            try:
+                candidate_baseline = evaluate(board) * (1.0 if board.turn else -1.0)
+                examples.append(
+                    Example(
+                        features(board),
+                        float(candidate_white_score),
+                        candidate_baseline,
+                        split,
+                    )
+                )
+            finally:
+                board.pop()
     return examples
 
 
