@@ -56,6 +56,9 @@ evaluation worth searching with.
 - `baselines/numba` is `minimax` with the evaluation jitted. It is barely stronger, which is
   the point: jitting a shallow search buys headroom, not depth. Read it for the warm-up call
   at the bottom, which is how you keep compilation off your clock.
+- `baselines/approx1000` is a test-only two-ply positional opponent with controlled move noise.
+  Its label is provisional, not an independently calibrated rating; recalibrate it against the
+  event's CCRL-labelled house bots when public games begin.
 
 ## What's here
 
