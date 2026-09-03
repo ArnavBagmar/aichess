@@ -16,6 +16,7 @@ MAX_PLY: Final = 128
 MAX_QPLY: Final = 8
 TT_CAPACITY: Final = 180_000
 EVAL_CAPACITY: Final = 60_000
+PAWN_CACHE_CAPACITY: Final = 16_000
 TIME_CHECK_MASK: Final = 127
 EXACT: Final = 0
 LOWER: Final = 1
@@ -60,6 +61,34 @@ KING_MG: Final = tuple(
 KING_EG: Final = _table(28, -42)
 MG_TABLE: Final = ((), PAWN_MG, KNIGHT_MG, BISHOP_MG, ROOK_MG, QUEEN_MG, KING_MG)
 EG_TABLE: Final = ((), PAWN_EG, KNIGHT_EG, BISHOP_EG, ROOK_EG, QUEEN_EG, KING_EG)
+ADJACENT_FILES: Final = tuple(
+    (chess.BB_FILES[file_index - 1] if file_index else 0)
+    | (chess.BB_FILES[file_index + 1] if file_index < 7 else 0)
+    for file_index in range(8)
+)
+PASSED_MASKS: Final = tuple(
+    tuple(
+        (
+            chess.BB_FILES[chess.square_file(square)]
+            | ADJACENT_FILES[chess.square_file(square)]
+        )
+        & sum(
+            (
+                chess.BB_RANKS[rank]
+                for rank in (
+                    range(chess.square_rank(square) + 1, 8)
+                    if color == chess.WHITE
+                    else range(chess.square_rank(square))
+                )
+            ),
+            0,
+        )
+        for square in chess.SQUARES
+    )
+    # chess.Color is bool, so tuple indices must be BLACK (0), WHITE (1).
+    for color in (chess.BLACK, chess.WHITE)
+)
+PASSED_BONUS: Final = (0, 8, 14, 24, 40, 65, 100, 0)
 
 
 class SearchTimeout(Exception):
@@ -97,6 +126,8 @@ class SearchStats:
     delta_prunes: int = 0
     eval_calls: int = 0
     eval_hits: int = 0
+    pawn_calls: int = 0
+    pawn_hits: int = 0
 
 
 def _tt_key(board: chess.Board) -> object:
@@ -151,7 +182,28 @@ def static_exchange(board: chess.Board, move: chess.Move) -> int:
     return gains[0]
 
 
-def evaluate(board: chess.Board) -> int:
+def _pawn_structure(white_pawns: int, black_pawns: int) -> int:
+    """Return pawn-structure terms from White's perspective."""
+    score = 0
+    for color, sign, pawns, enemies in (
+        (chess.WHITE, 1, white_pawns, black_pawns),
+        (chess.BLACK, -1, black_pawns, white_pawns),
+    ):
+        for file_index, file_mask in enumerate(chess.BB_FILES):
+            count = (pawns & file_mask).bit_count()
+            if count > 1:
+                score -= sign * 11 * (count - 1)
+            if count and not pawns & ADJACENT_FILES[file_index]:
+                score -= sign * 9 * count
+        for square in chess.scan_forward(pawns):
+            if not enemies & PASSED_MASKS[color][square]:
+                rank_index = chess.square_rank(square)
+                advance = rank_index if color else 7 - rank_index
+                score += sign * PASSED_BONUS[advance]
+    return score
+
+
+def evaluate(board: chess.Board, pawn_score: int | None = None) -> int:
     """Tapered material, placement, pawn, bishop-pair, and rook-file evaluation."""
     mg = eg = phase = 0
     for square, piece in board.piece_map().items():
@@ -164,38 +216,14 @@ def evaluate(board: chess.Board) -> int:
 
     phase = min(phase, MAX_PHASE)
     score = (mg * phase + eg * (MAX_PHASE - phase)) // MAX_PHASE
+    white_pawns = board.pieces_mask(chess.PAWN, chess.WHITE)
+    black_pawns = board.pieces_mask(chess.PAWN, chess.BLACK)
+    score += _pawn_structure(white_pawns, black_pawns) if pawn_score is None else pawn_score
     for color, sign in ((chess.WHITE, 1), (chess.BLACK, -1)):
         if len(board.pieces(chess.BISHOP, color)) >= 2:
             score += sign * 28
-        pawns = board.pieces(chess.PAWN, color)
-        enemies = board.pieces(chess.PAWN, not color)
-        for file_index in range(8):
-            file_mask = chess.BB_FILES[file_index]
-            count = len(pawns & file_mask)
-            if count > 1:
-                score -= sign * 11 * (count - 1)
-            adjacent_files = 0
-            if file_index:
-                adjacent_files |= chess.BB_FILES[file_index - 1]
-            if file_index < 7:
-                adjacent_files |= chess.BB_FILES[file_index + 1]
-            if count and not pawns & adjacent_files:
-                score -= sign * 9 * count
-        for square in pawns:
-            file_index = chess.square_file(square)
-            rank_index = chess.square_rank(square)
-            files = chess.BB_FILES[file_index]
-            if file_index:
-                files |= chess.BB_FILES[file_index - 1]
-            if file_index < 7:
-                files |= chess.BB_FILES[file_index + 1]
-            forward = 0
-            ranks = range(rank_index + 1, 8) if color else range(rank_index)
-            for rank in ranks:
-                forward |= chess.BB_RANKS[rank]
-            if not enemies & files & forward:
-                advance = rank_index if color else 7 - rank_index
-                score += sign * (0, 8, 14, 24, 40, 65, 100, 0)[advance]
+        pawns = white_pawns if color else black_pawns
+        enemies = black_pawns if color else white_pawns
         for square in board.pieces(chess.ROOK, color):
             file_mask = chess.BB_FILES[chess.square_file(square)]
             if not pawns & file_mask:
@@ -209,6 +237,7 @@ class Engine:
     def __init__(self) -> None:
         self.tt: dict[object, TTEntry] = {}
         self.eval_cache: dict[object, int] = {}
+        self.pawn_cache: dict[tuple[int, int], int] = {}
         self.history: dict[tuple[chess.Color, int, int], int] = {}
         self.killers: list[list[chess.Move | None]] = [[None, None] for _ in range(MAX_PLY)]
         self.nodes = 0
@@ -227,7 +256,19 @@ class Engine:
         if cached is not None:
             self.stats.eval_hits += 1
             return cached
-        score = evaluate(board)
+        white_pawns = board.pieces_mask(chess.PAWN, chess.WHITE)
+        black_pawns = board.pieces_mask(chess.PAWN, chess.BLACK)
+        pawn_key = (white_pawns, black_pawns)
+        self.stats.pawn_calls += 1
+        pawn_score = self.pawn_cache.get(pawn_key)
+        if pawn_score is None:
+            pawn_score = _pawn_structure(white_pawns, black_pawns)
+            if len(self.pawn_cache) >= PAWN_CACHE_CAPACITY:
+                self.pawn_cache.clear()
+            self.pawn_cache[pawn_key] = pawn_score
+        else:
+            self.stats.pawn_hits += 1
+        score = evaluate(board, pawn_score)
         if len(self.eval_cache) >= EVAL_CAPACITY:
             self.eval_cache.clear()
         self.eval_cache[key] = score

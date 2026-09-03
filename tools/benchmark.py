@@ -79,7 +79,7 @@ def main() -> None:
 
     print(
         "name                 phase       move  depth   score    nodes      nps  "
-        "q%  tt%  eval%  first%  null  lmr  qprune"
+        "q%  tt%  eval% pawn% first%  null  lmr  qprune"
     )
     totals = {"nodes": 0, "elapsed": 0.0, "qnodes": 0}
     for position in POSITIONS:
@@ -91,13 +91,15 @@ def main() -> None:
         q_percent = 100 * stats.qnodes / stats.nodes if stats.nodes else 0
         tt_percent = 100 * stats.tt_hits / stats.tt_probes if stats.tt_probes else 0
         eval_percent = 100 * stats.eval_hits / stats.eval_calls if stats.eval_calls else 0
+        pawn_percent = 100 * stats.pawn_hits / stats.pawn_calls if stats.pawn_calls else 0
         first_percent = (
             100 * stats.first_move_cutoffs / stats.beta_cutoffs if stats.beta_cutoffs else 0
         )
         print(
             f"{position.name:20} {position.phase:10} {move.uci():5} "
             f"{stats.completed_depth:5} {stats.score:7} {stats.nodes:8} {nps:8} "
-            f"{q_percent:3.0f} {tt_percent:4.0f} {eval_percent:5.0f} {first_percent:6.0f} "
+            f"{q_percent:3.0f} {tt_percent:4.0f} {eval_percent:5.0f} {pawn_percent:5.0f} "
+            f"{first_percent:6.0f} "
             f"{stats.null_cutoffs:4}/{stats.null_tries:<4} "
             f"{stats.lmr_researches:3}/{stats.lmr_reductions:<3} "
             f"{stats.see_prunes + stats.delta_prunes:6}"

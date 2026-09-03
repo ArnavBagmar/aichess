@@ -21,6 +21,13 @@ class EvaluationTests(unittest.TestCase):
         self.assertGreater(evaluate(white), 800)
         self.assertLess(evaluate(black), -800)
 
+    def test_cached_pawn_term_preserves_evaluation(self) -> None:
+        engine = Engine()
+        for position in POSITIONS:
+            board = chess.Board(position.fen)
+            self.assertEqual(engine._evaluate(board), evaluate(board), position.name)
+        self.assertGreater(engine.stats.pawn_calls, 0)
+
 
 class SearchTests(unittest.TestCase):
     def test_static_exchange_values_hanging_and_poisoned_captures(self) -> None:
