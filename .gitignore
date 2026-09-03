@@ -5,3 +5,5 @@ __pycache__/
 submission.zip
 *.pgn
 .bench-worktrees/
+data/*.jsonl
+data/*.jsonl.manifest.json
