@@ -4,6 +4,7 @@ import unittest
 import chess
 
 from agent import MATE, Engine, evaluate, get_move
+from tools.benchmark import POSITIONS
 
 
 class EvaluationTests(unittest.TestCase):
@@ -50,6 +51,24 @@ class SearchTests(unittest.TestCase):
         for score in (MATE - 7, -MATE + 9, 123, -456):
             stored = engine._score_to_tt(score, 5)
             self.assertEqual(engine._score_from_tt(stored, 5), score)
+
+    def test_search_exposes_completed_iteration_telemetry(self) -> None:
+        engine = Engine()
+        board = chess.Board()
+        move = engine.choose(board, 1_000)
+        self.assertIn(move, board.legal_moves)
+        self.assertGreaterEqual(engine.stats.completed_depth, 1)
+        self.assertGreater(engine.stats.nodes, 0)
+        self.assertGreater(engine.stats.elapsed_s, 0)
+
+    def test_benchmark_corpus_contains_legal_nonterminal_positions(self) -> None:
+        phases = set()
+        for position in POSITIONS:
+            board = chess.Board(position.fen)
+            self.assertTrue(board.is_valid(), position.name)
+            self.assertFalse(board.is_game_over(), position.name)
+            phases.add(position.phase)
+        self.assertTrue({"opening", "middlegame", "tactical", "endgame"} <= phases)
 
 
 if __name__ == "__main__":

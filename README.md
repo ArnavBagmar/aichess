@@ -29,6 +29,8 @@ the starter's legal random mover for protocol and smoke testing.
 ```
 make play                                          # one game, real time control
 make arena                                         # 20 fast games, prints a score
+make benchmark                                     # multi-phase search telemetry
+make test                                          # tactical, evaluation, and clock regressions
 make play FEN="<fen>"                              # start from a given position
 uv run python -m harness.play --black baselines/minimax --pgn game.pgn
 uv run python -m harness.arena --opponent ../my-old-version --games 200

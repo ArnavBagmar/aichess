@@ -12,7 +12,8 @@ INFINITY: Final = 32_000
 MATE: Final = 31_000
 MATE_BOUND: Final = 30_000
 MAX_PLY: Final = 128
-MAX_QPLY: Final = 16
+# A hard guard against pathological capture trees. Proper SEE-based pruning is the next refinement.
+MAX_QPLY: Final = 8
 TT_CAPACITY: Final = 180_000
 TIME_CHECK_MASK: Final = 127
 EXACT: Final = 0
@@ -71,6 +72,26 @@ class TTEntry:
     flag: int
     move: chess.Move | None
     age: int
+
+
+@dataclass(slots=True)
+class SearchStats:
+    """Low-overhead counters for tests and offline profiling."""
+
+    nodes: int = 0
+    qnodes: int = 0
+    completed_depth: int = 0
+    score: int = 0
+    elapsed_s: float = 0.0
+    tt_probes: int = 0
+    tt_hits: int = 0
+    tt_cutoffs: int = 0
+    beta_cutoffs: int = 0
+    first_move_cutoffs: int = 0
+    null_tries: int = 0
+    null_cutoffs: int = 0
+    lmr_reductions: int = 0
+    lmr_researches: int = 0
 
 
 def _tt_key(board: chess.Board) -> object:
@@ -138,6 +159,7 @@ class Engine:
         self.history: dict[tuple[chess.Color, int, int], int] = {}
         self.killers: list[list[chess.Move | None]] = [[None, None] for _ in range(MAX_PLY)]
         self.nodes = 0
+        self.stats = SearchStats()
         self.deadline = 0.0
         self.age = 0
 
@@ -206,25 +228,39 @@ class Engine:
 
     def _quiescence(self, board: chess.Board, alpha: int, beta: int, ply: int, qply: int) -> int:
         self.nodes += 1
+        self.stats.qnodes += 1
         self._check_time()
         if self._is_draw(board):
             return 0
         in_check = board.is_check()
-        moves = list(board.legal_moves)
-        if not moves:
-            return -MATE + ply if in_check else 0
         if ply >= MAX_PLY or qply >= MAX_QPLY:
             return evaluate(board)
-        if not in_check:
+        if in_check:
+            moves = list(board.legal_moves)
+            if not moves:
+                return -MATE + ply
+        else:
             stand_pat = evaluate(board)
             if stand_pat >= beta:
                 return stand_pat
             alpha = max(alpha, stand_pat)
-            moves = [move for move in moves if board.is_capture(move) or move.promotion]
+            moves = list(board.generate_legal_captures())
+            promotion_ranks = chess.BB_RANK_1 | chess.BB_RANK_8
+            moves.extend(
+                move
+                for move in board.generate_legal_moves(
+                    from_mask=board.pawns, to_mask=promotion_ranks
+                )
+                if not board.is_capture(move)
+            )
+            if not moves and board.is_stalemate():
+                return 0
         for move in self._ordered_moves(board, moves, None, ply):
             board.push(move)
-            score = -self._quiescence(board, -beta, -alpha, ply + 1, qply + 1)
-            board.pop()
+            try:
+                score = -self._quiescence(board, -beta, -alpha, ply + 1, qply + 1)
+            finally:
+                board.pop()
             if score >= beta:
                 return score
             alpha = max(alpha, score)
@@ -242,8 +278,11 @@ class Engine:
 
         alpha_original = alpha
         key = _tt_key(board)
+        self.stats.tt_probes += 1
         entry = self.tt.get(key)
         tt_move = entry.move if entry else None
+        if entry is not None:
+            self.stats.tt_hits += 1
         if entry is not None and entry.depth >= depth:
             tt_score = self._score_from_tt(entry.score, ply)
             if entry.flag == EXACT:
@@ -253,6 +292,7 @@ class Engine:
             else:
                 beta = min(beta, tt_score)
             if alpha >= beta:
+                self.stats.tt_cutoffs += 1
                 return tt_score
 
         if depth <= 0:
@@ -268,11 +308,17 @@ class Engine:
             and self._has_non_pawn_material(board, board.turn)
             and evaluate(board) >= beta
         ):
+            self.stats.null_tries += 1
             reduction = 2 + depth // 4
             board.push(chess.Move.null())
-            score = -self._negamax(board, depth - 1 - reduction, -beta, -beta + 1, ply + 1, False)
-            board.pop()
+            try:
+                score = -self._negamax(
+                    board, depth - 1 - reduction, -beta, -beta + 1, ply + 1, False
+                )
+            finally:
+                board.pop()
             if score >= beta:
+                self.stats.null_cutoffs += 1
                 return score
 
         moves = list(board.legal_moves)
@@ -285,24 +331,33 @@ class Engine:
             quiet = not board.is_capture(move) and move.promotion is None
             gives_check = board.gives_check(move)
             board.push(move)
-            if index == 0:
-                score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1, True)
-            else:
-                reduction = 0
-                if depth >= 3 and index >= 4 and quiet and not in_check and not gives_check:
-                    reduction = 1 + int(depth >= 6 and index >= 8)
-                score = -self._negamax(
-                    board, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1, True
-                )
-                if score > alpha and reduction:
-                    score = -self._negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1, True)
-                if score > alpha and score < beta:
+            try:
+                if index == 0:
                     score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1, True)
-            board.pop()
+                else:
+                    reduction = 0
+                    if depth >= 3 and index >= 4 and quiet and not in_check and not gives_check:
+                        reduction = 1 + int(depth >= 6 and index >= 8)
+                        self.stats.lmr_reductions += 1
+                    score = -self._negamax(
+                        board, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1, True
+                    )
+                    if score > alpha and reduction:
+                        self.stats.lmr_researches += 1
+                        score = -self._negamax(
+                            board, depth - 1, -alpha - 1, -alpha, ply + 1, True
+                        )
+                    if score > alpha and score < beta:
+                        score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1, True)
+            finally:
+                board.pop()
             if score > best_score:
                 best_score, best_move = score, move
             alpha = max(alpha, score)
             if alpha >= beta:
+                self.stats.beta_cutoffs += 1
+                if index == 0:
+                    self.stats.first_move_cutoffs += 1
                 if quiet:
                     if ply < MAX_PLY and move != self.killers[ply][0]:
                         self.killers[ply][1] = self.killers[ply][0]
@@ -332,13 +387,15 @@ class Engine:
         best_move, best_score, alpha_original = moves[0], -INFINITY, alpha
         for index, move in enumerate(moves):
             board.push(move)
-            if index == 0:
-                score = -self._negamax(board, depth - 1, -beta, -alpha, 1, True)
-            else:
-                score = -self._negamax(board, depth - 1, -alpha - 1, -alpha, 1, True)
-                if score > alpha and score < beta:
+            try:
+                if index == 0:
                     score = -self._negamax(board, depth - 1, -beta, -alpha, 1, True)
-            board.pop()
+                else:
+                    score = -self._negamax(board, depth - 1, -alpha - 1, -alpha, 1, True)
+                    if score > alpha and score < beta:
+                        score = -self._negamax(board, depth - 1, -beta, -alpha, 1, True)
+            finally:
+                board.pop()
             if score > best_score:
                 best_score, best_move = score, move
             alpha = max(alpha, score)
@@ -360,17 +417,20 @@ class Engine:
         return optimum, min(usable, max(optimum, optimum * 1.9))
 
     def choose(self, board: chess.Board, time_left_ms: int) -> chess.Move:
+        call_start = time.perf_counter()
+        self.nodes = 0
+        self.stats = SearchStats()
         moves = list(board.legal_moves)
         if not moves:
             raise ValueError("get_move called on a terminal position")
         fallback = moves[0]
         if len(moves) == 1 or time_left_ms <= 5:
+            self.stats.elapsed_s = time.perf_counter() - call_start
             return fallback
 
         soft_budget, hard_budget = self._time_budget(time_left_ms)
         start = time.perf_counter()
         self.deadline = start + hard_budget
-        self.nodes = 0
         self.age += 1
         best_move, previous_score = fallback, 0
         for depth in range(1, 65):
@@ -393,8 +453,12 @@ class Engine:
             except SearchTimeout:
                 break
             best_move, previous_score = candidate, score
+            self.stats.completed_depth = depth
+            self.stats.score = score
             if abs(score) >= MATE_BOUND or time.perf_counter() - start >= soft_budget:
                 break
+        self.stats.nodes = self.nodes
+        self.stats.elapsed_s = time.perf_counter() - start
         return best_move
 
 
