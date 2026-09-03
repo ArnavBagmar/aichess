@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: setup play arena benchmark test zip gate
+.PHONY: setup play arena paired benchmark test zip gate
 
 setup:
 	uv sync
@@ -10,6 +10,9 @@ play:
 
 arena:
 	uv run python -m harness.arena --opponent baselines/greedy --games 20
+
+paired:
+	uv run python -m tools.paired_arena --opponent baselines/greedy
 
 benchmark:
 	uv run python -m tools.benchmark

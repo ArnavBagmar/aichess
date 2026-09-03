@@ -29,6 +29,7 @@ the starter's legal random mover for protocol and smoke testing.
 ```
 make play                                          # one game, real time control
 make arena                                         # 20 fast games, prints a score
+make paired                                        # curated FENs, each color, pentanomial result
 make benchmark                                     # multi-phase search telemetry
 make test                                          # tactical, evaluation, and clock regressions
 make play FEN="<fen>"                              # start from a given position

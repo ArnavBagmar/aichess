@@ -15,6 +15,7 @@ MAX_PLY: Final = 128
 # A hard guard against pathological capture trees. Proper SEE-based pruning is the next refinement.
 MAX_QPLY: Final = 8
 TT_CAPACITY: Final = 180_000
+EVAL_CAPACITY: Final = 60_000
 TIME_CHECK_MASK: Final = 127
 EXACT: Final = 0
 LOWER: Final = 1
@@ -92,11 +93,62 @@ class SearchStats:
     null_cutoffs: int = 0
     lmr_reductions: int = 0
     lmr_researches: int = 0
+    see_prunes: int = 0
+    delta_prunes: int = 0
+    eval_calls: int = 0
+    eval_hits: int = 0
 
 
 def _tt_key(board: chess.Board) -> object:
     """Use the pinned python-chess repetition key without accepting hash collisions."""
     return board._transposition_key()
+
+
+def static_exchange(board: chess.Board, move: chess.Move) -> int:
+    """Estimate the material result of all captures on ``move.to_square``.
+
+    This swap-off calculation is used for ordering and conservative quiescence pruning. It follows
+    x-ray attacks as occupancy changes and deliberately does not treat its result as a legal-search
+    score.
+    """
+    if not board.is_capture(move):
+        return (MG_VALUE[move.promotion] - MG_VALUE[chess.PAWN]) if move.promotion else 0
+
+    target = move.to_square
+    captured = chess.PAWN if board.is_en_passant(move) else board.piece_type_at(target)
+    if captured is None:
+        return 0
+    promotion_gain = MG_VALUE[move.promotion] - MG_VALUE[chess.PAWN] if move.promotion else 0
+    gains = [MG_VALUE[captured] + promotion_gain]
+    occupied = board.occupied ^ chess.BB_SQUARES[move.from_square]
+    if board.is_en_passant(move):
+        captured_square = target - 8 if board.turn == chess.WHITE else target + 8
+        occupied ^= chess.BB_SQUARES[captured_square]
+
+    side = not board.turn
+    occupant_value = MG_VALUE[move.promotion or board.piece_type_at(move.from_square) or chess.PAWN]
+    while len(gains) < 16:
+        attackers = board.attackers_mask(side, target, occupied) & occupied
+        attacker_square: chess.Square | None = None
+        attacker_type = 0
+        for piece_type in range(chess.PAWN, chess.KING + 1):
+            candidates = attackers & board.pieces_mask(piece_type, side)
+            if candidates:
+                attacker_square = chess.scan_forward(candidates).__next__()
+                attacker_type = piece_type
+                break
+        if attacker_square is None:
+            break
+        gains.append(occupant_value - gains[-1])
+        if max(-gains[-2], gains[-1]) < 0:
+            break
+        occupied ^= chess.BB_SQUARES[attacker_square]
+        occupant_value = MG_VALUE[attacker_type]
+        side = not side
+
+    for index in range(len(gains) - 2, -1, -1):
+        gains[index] = -max(-gains[index], gains[index + 1])
+    return gains[0]
 
 
 def evaluate(board: chess.Board) -> int:
@@ -156,6 +208,7 @@ class Engine:
 
     def __init__(self) -> None:
         self.tt: dict[object, TTEntry] = {}
+        self.eval_cache: dict[object, int] = {}
         self.history: dict[tuple[chess.Color, int, int], int] = {}
         self.killers: list[list[chess.Move | None]] = [[None, None] for _ in range(MAX_PLY)]
         self.nodes = 0
@@ -166,6 +219,19 @@ class Engine:
     def _check_time(self) -> None:
         if self.nodes & TIME_CHECK_MASK == 0 and time.perf_counter() >= self.deadline:
             raise SearchTimeout
+
+    def _evaluate(self, board: chess.Board) -> int:
+        self.stats.eval_calls += 1
+        key = _tt_key(board)
+        cached = self.eval_cache.get(key)
+        if cached is not None:
+            self.stats.eval_hits += 1
+            return cached
+        score = evaluate(board)
+        if len(self.eval_cache) >= EVAL_CAPACITY:
+            self.eval_cache.clear()
+        self.eval_cache[key] = score
+        return score
 
     @staticmethod
     def _has_non_pawn_material(board: chess.Board, color: chess.Color) -> bool:
@@ -234,13 +300,14 @@ class Engine:
             return 0
         in_check = board.is_check()
         if ply >= MAX_PLY or qply >= MAX_QPLY:
-            return evaluate(board)
+            return self._evaluate(board)
+        stand_pat = -INFINITY
         if in_check:
             moves = list(board.legal_moves)
             if not moves:
                 return -MATE + ply
         else:
-            stand_pat = evaluate(board)
+            stand_pat = self._evaluate(board)
             if stand_pat >= beta:
                 return stand_pat
             alpha = max(alpha, stand_pat)
@@ -256,6 +323,14 @@ class Engine:
             if not moves and board.is_stalemate():
                 return 0
         for move in self._ordered_moves(board, moves, None, ply):
+            if not in_check and not move.promotion and not board.gives_check(move):
+                captured_value = self._captured_value(board, move)
+                if stand_pat + captured_value + 180 < alpha:
+                    self.stats.delta_prunes += 1
+                    continue
+                if qply >= 2 and static_exchange(board, move) < -120:
+                    self.stats.see_prunes += 1
+                    continue
             board.push(move)
             try:
                 score = -self._quiescence(board, -beta, -alpha, ply + 1, qply + 1)
@@ -274,7 +349,7 @@ class Engine:
         if self._is_draw(board):
             return 0
         if ply >= MAX_PLY:
-            return evaluate(board)
+            return self._evaluate(board)
 
         alpha_original = alpha
         key = _tt_key(board)
@@ -306,7 +381,7 @@ class Engine:
             and depth >= 3
             and not in_check
             and self._has_non_pawn_material(board, board.turn)
-            and evaluate(board) >= beta
+            and self._evaluate(board) >= beta
         ):
             self.stats.null_tries += 1
             reduction = 2 + depth // 4

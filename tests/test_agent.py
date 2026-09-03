@@ -3,7 +3,7 @@ import unittest
 
 import chess
 
-from agent import MATE, Engine, evaluate, get_move
+from agent import MATE, Engine, evaluate, get_move, static_exchange
 from tools.benchmark import POSITIONS
 
 
@@ -23,6 +23,12 @@ class EvaluationTests(unittest.TestCase):
 
 
 class SearchTests(unittest.TestCase):
+    def test_static_exchange_values_hanging_and_poisoned_captures(self) -> None:
+        hanging = chess.Board("6k1/8/8/4q3/8/8/4R3/6K1 w - - 0 1")
+        poisoned = chess.Board("4r1k1/8/8/4p3/8/8/4Q3/6K1 w - - 0 1")
+        self.assertGreater(static_exchange(hanging, chess.Move.from_uci("e2e5")), 800)
+        self.assertLess(static_exchange(poisoned, chess.Move.from_uci("e2e5")), -700)
+
     def test_mate_in_one(self) -> None:
         board = chess.Board("7k/8/5KQ1/8/8/8/8/8 w - - 0 1")
         move = chess.Move.from_uci(get_move(board.fen(), 1_000))
