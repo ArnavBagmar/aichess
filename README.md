@@ -71,6 +71,7 @@ docs/COMPETITION.md  event premise, stages, constraints, and compliance boundary
 docs/RESEARCH.md     research-backed engine plan and reading list
 docs/REPOSITORY_SURVEY.md clean-room findings from major public chess-engine repositories
 docs/ENGINE_DEVELOPMENT.md tests, datasets, telemetry, calibration, and competition analysis plan
+docs/COMPETITION_SAFETY.md legal design boundaries, provenance, and pre-upload compliance gate
 ```
 
 Local games start from the normal position unless you pass `--fen`. Rated games start from
