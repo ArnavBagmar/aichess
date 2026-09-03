@@ -51,5 +51,12 @@ files = [
 mypy_path = "tests"
 
 [[tool.mypy.overrides]]
-module = "numba.*"
+module = ["numba.*", "model", "model.*"]
 ignore_missing_imports = true
+
+# torch ships huge stubs that crash mypy on descent; treat it as an opaque Any.
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+follow_imports_for_stubs = true
