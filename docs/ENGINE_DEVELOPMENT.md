@@ -177,6 +177,93 @@ Use paired starting positions with colors reversed. Record W/D/L, pentanomial pa
 crashes, illegal moves, latency, and version hashes. A candidate must beat the current version across
 multiple opponent types rather than overfit one baseline.
 
+## Just-in-time research backlog
+
+We have enough general theory to build. The remaining research is triggered by a concrete engine
+milestone so reading stays connected to an implementation or measurement.
+
+### Before learned evaluation
+
+Study and experimentally settle:
+
+- king-relative sparse features and dual-perspective accumulators;
+- eager versus lazy accumulator updates;
+- refresh behavior after king moves and unusual state transitions;
+- integer scale factors, clipping, saturation, and worst-case overflow bounds;
+- quantization-aware training and agreement between training and deployed inference;
+- phase/material output buckets and whether their gain pays for added complexity;
+- NumPy, Numba, and ONNX latency at the batch size of one used by alpha-beta search.
+
+The [official NNUE guide](https://official-stockfish.github.io/docs/nnue-pytorch-wiki/docs/nnue.html)
+is the primary implementation reference. We will use its mathematical principles but train our own
+weights and write our own integration.
+
+### Before each selective-search feature
+
+Research the interactions and construct regression positions before enabling the feature:
+
+- LMR with history scores, checks, promotions, and tactical re-searches;
+- null-move pruning with check, low material, zugzwang, and verification search;
+- aspiration widening under unstable scores;
+- fail-soft bound semantics and TT storage after reduced/null-window searches;
+- futility, reverse futility, razoring, and delta pruning near mate or tactical scores;
+- extension stacking and pathological search explosion.
+
+Never introduce several pruning mechanisms in one experiment. Correctness and paired-game evidence
+are required because an apparently faster search can become tactically unsound.
+
+### When profiling identifies a Python bottleneck
+
+Benchmark alternatives for the measured hot path rather than assuming a full rewrite is necessary:
+
+- `python-chess` legal generation, `push()`, `pop()`, check detection, and move-object allocation;
+- fixed NumPy arrays versus dictionaries for the transposition table;
+- compact integer moves versus `chess.Move` instances inside ordering tables;
+- public or team-written position hashes versus private library internals;
+- garbage-collection behavior and allocation-free search stacks;
+- JIT boundary overhead and the amount of work required per Numba call.
+
+Retain python-chess as the legality oracle in tests even if a faster internal representation is
+eventually introduced.
+
+### Before adaptive time management
+
+Measure a conservative base allocator first, then research bonuses based on:
+
+- principal-variation and best-move stability;
+- root-score oscillation and best/second-best separation;
+- aspiration failures, branching factor, and only-move detection;
+- increment, remaining time, estimated moves remaining, and fixed move overhead;
+- ponder hits and safe cancellation of obsolete pondering work.
+
+Stockfish describes a base allocation modified by best-move, evaluation, and position-complexity
+stability. Its constants are not portable; fit ours from our own telemetry at 120+0.5.
+
+### Before trusting Elo results
+
+Implement paired/pentanomial reporting, confidence intervals, and sequential stopping. Determine
+the minimum Elo effect our available game count can detect. Track fast-control versus 120+0.5
+correlation and avoid selecting the best-looking result from many noisy experiments.
+
+### After public ladder games appear
+
+Replace assumptions with observed distributions: starting FEN repetition, phase, material,
+practical asymmetry, game length, termination, and opponent failure modes. Engine-near-zero does not
+necessarily imply equal practical difficulty, so always reverse colors in local tests when possible.
+
+### Continuous failure mining
+
+Automatically retain positions where the chosen move loses teacher value, added depth changes the
+best move, pruning changes the result, evaluation and search disagree, time usage spikes, or a match
+loss begins. Minimize and categorize these positions, then add them to a versioned private regression
+suite. Our own failures should eventually be more valuable than generic puzzles.
+
+### Before spending package space on endgames
+
+Measure how often each material class occurs, exact WDL/DTZ footprint, probe latency, fifty-move
+semantics, and paired-game benefit. Compare every tablebase subset against using the same 50 MB
+budget for evaluator weights or other frequently used data.
+
 ## Delivery order
 
 1. Correctness, rule-edge-case, and deadline tests.
