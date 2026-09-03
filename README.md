@@ -23,7 +23,8 @@ def get_move(fen: str, time_left_ms: int) -> str:
     return "e2e4"
 ```
 
-The fork ships a legal random-mover, so the loop works before you write anything. Replace the body.
+The development branch ships an original selective alpha-beta engine. `baselines/random` preserves
+the starter's legal random mover for protocol and smoke testing.
 
 ```
 make play                                          # one game, real time control
@@ -47,7 +48,7 @@ evaluation worth searching with.
 | greedy vs minimax | 6 | 120 s + 0.5 s | 0.0% (+0 =0 -6) |
 | numba vs minimax | 6 | 10 s + 0.5 s | 66.7% (+2 =4 -0) |
 
-- `baselines/random` plays a uniformly random legal move. It is what `agent.py` starts as.
+- `baselines/random` plays a uniformly random legal move and remains the smoke-test opponent.
 - `baselines/greedy` searches one ply on material.
 - `baselines/minimax` searches two plies on material and mobility, with no time management.
 - `baselines/numba` is `minimax` with the evaluation jitted. It is barely stronger, which is
@@ -79,6 +80,18 @@ curated neutral positions.
 
 The harness is here so your games are honest, not so you can pre-validate an upload. Acceptance
 happens on the platform, and the validation log on your dashboard is the authority on it.
+
+## Current development engine
+
+`agent.py` currently combines iterative deepening, aspiration windows, principal-variation search,
+quiescence, a bounded transposition table, TT/capture/killer/history move ordering, conservative
+null-move pruning, late-move reductions, mate-distance scoring, a tapered handcrafted evaluation,
+and soft/hard clock limits with an always-legal fallback. It is entirely project-authored and loads
+no external engine or pretrained weights.
+
+Run `python -m unittest -v` in the project environment for its evaluation, tactical, terminal,
+mate-score, and low-clock regressions. This is the classical baseline against which every future
+search feature and team-trained evaluator must demonstrate a measured improvement.
 
 ## The rules
 
