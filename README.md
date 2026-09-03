@@ -70,6 +70,7 @@ docs/IDEAS.md        where the strength actually comes from
 docs/COMPETITION.md  event premise, stages, constraints, and compliance boundary
 docs/RESEARCH.md     research-backed engine plan and reading list
 docs/REPOSITORY_SURVEY.md clean-room findings from major public chess-engine repositories
+docs/ENGINE_DEVELOPMENT.md tests, datasets, telemetry, calibration, and competition analysis plan
 ```
 
 Local games start from the normal position unless you pass `--fen`. Rated games start from
