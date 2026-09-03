@@ -132,6 +132,72 @@ game as independent. Sequential tests such as SPRT can stop losing or clearly wi
 early. SPSA is useful later for simultaneously tuning numeric parameters, but it cannot rescue a
 weak architecture or noisy match setup.
 
+## Recent research: 2024-2026
+
+This section records recent work that changes a design, training, or testing decision under the
+event's one-core, 2 GB, and 50 MB constraints. It is not a claim that every new chess paper should
+be implemented.
+
+### Search is still the tactical verifier
+
+ChessBench shows that a sufficiently large transformer can distill a remarkable amount of
+Stockfish's searched knowledge into direct action-value predictions. Its strongest reported model
+is too large for our hot evaluation loop, and distillation remains imperfect. Use learned
+evaluation to improve leaf quality while retaining explicit search for tactical verification.
+
+Work on Leela Chess Zero provides causal evidence that a neural network can encode future optimal
+moves internally. This may make shallow search stronger than a purely local feature sum, but it
+does not make evaluation tactically exact: search must still verify forcing moves and refutations.
+
+### Dataset construction is an engine feature
+
+Recent NNUE research reports that quiet positions and score filtering materially affect evaluator
+quality. Retain provenance and search depth, remove terminal or malformed samples, deduplicate,
+and exclude tactically unstable positions or label them only after adequate deep search.
+
+Compare clipped teacher centipawn scores, WDL probabilities, blended teacher/game outcomes, and
+move preferences. Split by game or opening family, not random neighboring positions. Select the
+final model through paired games: lower validation loss need not mean more Elo inside search.
+
+### Learned planning is informative but not the deployment plan
+
+Recent mixture-of-experts, diffusion, and internal-planning systems suggest cheaper experiments:
+
+- phase or material buckets can specialize a small evaluator;
+- a tiny policy head can improve ordering if saved nodes exceed its inference cost;
+- iterative refinement can use different effort near the root and at leaves;
+- uncertainty can determine when to spend extra nodes.
+
+Full MCTS plus multiple experts, a large transformer, or diffusion inference is a poor initial fit
+for one CPU core. Consider these only after the alpha-beta baseline is strong and profiling shows
+headroom.
+
+### Resource-rational time allocation
+
+Value-of-computation theory says extra thinking is useful when it may change a consequential
+decision. Spend more time when the PV changes, root score oscillates, the top moves are close, only
+one move avoids a large loss, or the position is forcing. Spend less in stable or forced positions.
+First reserve a hard safety buffer, account for increment and moves remaining, and stop only between
+completed units of work. Add adaptive bonuses after timeout-free baseline testing.
+
+## Practical hypothesis ledger
+
+| Priority | Hypothesis | Measurement | Adoption gate |
+|---|---|---|---|
+| P0 | TT/PV/capture/history ordering lowers branching factor | nodes and depth at fixed time | no correctness failures; match gain |
+| P0 | Quiescence removes horizon blunders | tactical suite and games | fewer tactical misses; match gain |
+| P0 | Conservative iterative time control avoids forfeits | long arena runs | zero avoidable flags/crashes |
+| P1 | Null move and LMR buy useful depth | depth, regressions, games | regression-safe match gain |
+| P1 | Tapered evaluation improves positional choices | ablations and games | statistically credible gain |
+| P1 | Quiet, deeply labelled samples improve evaluation | held-out loss plus games | model beats classical evaluator |
+| P2 | Incremental integer NNUE improves work per CPU cycle | evaluations/s, nodes/s, games | net Elo after integration cost |
+| P2 | Search-instability time bonuses improve hard choices | timed paired games | gain without more flags |
+| P3 | Tiny policy priors improve move ordering | nodes to solution and games | saved nodes exceed inference cost |
+| P3 | Phase-specialized buckets beat one network | latency, size, games | gain within runtime limits |
+
+Change one row at a time, keep a reproducible baseline, archive match metadata, and revert plausible
+ideas that lose games.
+
 ## Build order
 
 1. Legal fallback, terminal detection, mate-distance scores, and monotonic clock handling.
@@ -157,5 +223,17 @@ weak architecture or noisy match setup.
 - Dominik Klein, [Neural Networks for Chess](https://arxiv.org/abs/2209.01506), 2022.
 - Daniel Tan and Neftali Watkinson Medina, [Study of the Proper NNUE Dataset](https://arxiv.org/abs/2412.17948), 2024.
 - Anian Ruoss et al., [Amortized Planning with Large-Scale Transformers: A Case Study on Chess](https://proceedings.neurips.cc/paper_files/paper/2024/hash/78f0db30c39c850de728c769f42fc903-Abstract-Conference.html), 2024.
+- Erik Jenner et al., [Evidence of Learned Look-Ahead in a Chess-Playing Neural Network](https://proceedings.neurips.cc/paper_files/paper/2024/hash/37d9f19150fce07bced2a81fc87d47a6-Abstract-Conference.html), 2024.
+- Felix Helfenstein et al., [Checkmating One, by Using Many](https://arxiv.org/abs/2401.16852), 2024.
+- Yiming Zhang et al., [Human-aligned Chess with a Bit of Search](https://arxiv.org/abs/2410.03893), ICLR 2025.
+- Jiacheng Ye et al., [Implicit Search via Discrete Diffusion: A Study on Chess](https://openreview.net/forum?id=A9y3LFX4ds), ICLR 2025.
+- John Schultz et al., [Mastering Board Games by External and Internal Planning with Language Models](https://proceedings.mlr.press/v267/schultz25a.html), ICML 2025.
+- Elias Sandmann, Sebastian Lapuschkin, and Wojciech Samek, [Iterative Inference in a Chess-Playing Neural Network](https://arxiv.org/abs/2508.21380), 2025.
 - [Official Stockfish documentation](https://official-stockfish.github.io/docs/stockfish-wiki/Home.html), including the search terminology, NNUE, Fishtest, and useful-data sections.
+- [Stockfish Fishtest](https://github.com/official-stockfish/fishtest), for paired testing, pentanomial outcomes, SPRT, and SPSA practice.
 
+## Interpretation boundary
+
+Paper Elo numbers are not directly comparable with this event's Elo. Hardware, opponents, opening
+sets, time controls, adjudication, and rating pools differ. Research results are inputs to
+hypotheses; only reproducible matches in this repository's harness establish value for our bot.
