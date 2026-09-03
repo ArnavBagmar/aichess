@@ -22,7 +22,11 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [dependency-groups]
-dev = ["mypy>=1.18", "ruff>=0.14"]
+dev = ["mypy>=1.18", "ruff>=0.14", "pytest>=8.3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
@@ -34,4 +38,18 @@ ignore = ["N818"]
 
 [tool.mypy]
 strict = true
-files = ["agent.py", "harness"]
+files = [
+    "agent.py",
+    "nnue_arch.py",
+    "nnue_features.py",
+    "nnue_net.py",
+    "nnue_engine.py",
+    "harness",
+    "tools",
+    "tests",
+]
+mypy_path = "tests"
+
+[[tool.mypy.overrides]]
+module = "numba.*"
+ignore_missing_imports = true
