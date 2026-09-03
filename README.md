@@ -67,6 +67,8 @@ harness/play.py      one game between two agent directories
 harness/arena.py     many games, with a score
 harness/package.py   builds submission.zip with agent.py at the root
 docs/IDEAS.md        where the strength actually comes from
+docs/COMPETITION.md  event premise, stages, constraints, and compliance boundary
+docs/RESEARCH.md     research-backed engine plan and reading list
 ```
 
 Local games start from the normal position unless you pass `--fen`. Rated games start from
