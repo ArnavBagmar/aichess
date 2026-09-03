@@ -79,7 +79,7 @@ def main() -> None:
 
     print(
         "name                 phase       move  depth   score    nodes      nps  "
-        "q%  tt%  eval% pawn% first%  null  lmr  qprune"
+        "q%  tt%  eval% pawn% first%  null  rfp  lmr  qprune"
     )
     totals = {"nodes": 0, "elapsed": 0.0, "qnodes": 0}
     for position in POSITIONS:
@@ -101,6 +101,7 @@ def main() -> None:
             f"{q_percent:3.0f} {tt_percent:4.0f} {eval_percent:5.0f} {pawn_percent:5.0f} "
             f"{first_percent:6.0f} "
             f"{stats.null_cutoffs:4}/{stats.null_tries:<4} "
+            f"{stats.reverse_futility_prunes:4} "
             f"{stats.lmr_researches:3}/{stats.lmr_reductions:<3} "
             f"{stats.see_prunes + stats.delta_prunes:6}"
         )

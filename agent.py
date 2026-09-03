@@ -120,6 +120,7 @@ class SearchStats:
     first_move_cutoffs: int = 0
     null_tries: int = 0
     null_cutoffs: int = 0
+    reverse_futility_prunes: int = 0
     lmr_reductions: int = 0
     lmr_researches: int = 0
     see_prunes: int = 0
@@ -417,12 +418,28 @@ class Engine:
         if in_check and depth <= 6:
             depth += 1
 
+        static_eval: int | None = None
+        has_non_pawn_material = self._has_non_pawn_material(board, board.turn)
+        if not in_check and has_non_pawn_material:
+            static_eval = self._evaluate(board)
+            # At shallow, non-PV nodes, a position comfortably above beta does not need
+            # move-by-move proof. Keep mate windows and pawn-only zugzwangs out of this rule.
+            if (
+                depth <= 3
+                and beta - alpha == 1
+                and abs(beta) < MATE_BOUND
+                and static_eval - 90 * depth >= beta
+            ):
+                self.stats.reverse_futility_prunes += 1
+                return static_eval
+
         if (
             allow_null
             and depth >= 3
             and not in_check
-            and self._has_non_pawn_material(board, board.turn)
-            and self._evaluate(board) >= beta
+            and has_non_pawn_material
+            and static_eval is not None
+            and static_eval >= beta
         ):
             self.stats.null_tries += 1
             reduction = 2 + depth // 4
