@@ -5,6 +5,7 @@ accumulators keep behaving exactly as tests/test_parity.py pins them. Scores sta
 the engine's native 1/32-centipawn integer units end to end.
 """
 
+import time
 from collections.abc import Hashable
 from typing import Final
 
@@ -160,3 +161,160 @@ class Searcher:
             del killers[KILLERS_PER_PLY:]
         key = (move.from_square, move.to_square)
         self.history[key] = self.history.get(key, 0) + depth * depth
+
+    def pick(self, fen: str, time_left_ms: int) -> chess.Move:
+        """Best move for `fen`, within the budget implied by `time_left_ms`."""
+        self.engine.set_position(fen)
+        board = self.engine.board
+        moves = self.ordered_moves(board, 0, None)
+        if not moves:
+            raise ValueError(f"no legal moves in {fen!r}")
+
+        self.note_root_position(board)
+        self._deadline = time.monotonic() + budget_ms(time_left_ms) / 1000.0
+        self.nodes = 0
+        self._path.clear()
+
+        best = moves[0]
+        for depth in range(1, MAX_DEPTH):
+            try:
+                score, move = self._search_root(depth, best)
+            except SearchAborted:
+                break  # discard this depth entirely; it has a biased best move
+            if move is not None:
+                best = move
+            if abs(score) >= MATE - MAX_PLY_LIMIT:
+                break  # a forced mate is as good as it gets
+        return best
+
+    def _search_root(self, depth: int, previous_best: chess.Move) -> tuple[int, chess.Move | None]:
+        board = self.engine.board
+        alpha = -2 * MATE
+        best_score = -2 * MATE
+        best_move: chess.Move | None = None
+        for move in self.ordered_moves(board, 0, previous_best):
+            self.engine.push(move)
+            try:
+                score = -self._negamax(depth - 1, 1, -2 * MATE, -alpha)
+            finally:
+                self.engine.pop()
+            if score > best_score:
+                best_score, best_move = score, move
+            alpha = max(alpha, score)
+        return best_score, best_move
+
+    def _check_clock(self) -> None:
+        self.nodes += 1
+        if self.nodes % CLOCK_CHECK_NODES == 0 and time.monotonic() > self._deadline:
+            raise SearchAborted
+
+    def _negamax(self, depth: int, ply: int, alpha: int, beta: int) -> int:
+        self._check_clock()
+        board = self.engine.board
+        if self.is_draw(board, ply):
+            return 0
+
+        key = board._transposition_key()
+        tt_move: chess.Move | None = None
+        entry = self.table.get(key)
+        if entry is not None:
+            stored_depth, stored_score, stored_bound, tt_move = entry
+            if stored_depth >= depth:
+                if stored_bound == EXACT:
+                    return stored_score
+                if stored_bound == LOWER and stored_score >= beta:
+                    return stored_score
+                if stored_bound == UPPER and stored_score <= alpha:
+                    return stored_score
+
+        if depth <= 0 or ply >= MAX_PLY_LIMIT:
+            return self._quiescence(ply, alpha, beta)
+
+        moves = self.ordered_moves(board, ply, tt_move)
+        if not moves:
+            return -MATE + ply if board.is_check() else 0
+
+        original_alpha = alpha
+        best_score = -2 * MATE
+        best_move: chess.Move | None = None
+        self._path.append(key)
+        try:
+            for move in moves:
+                self.engine.push(move)
+                try:
+                    score = -self._negamax(depth - 1, ply + 1, -beta, -alpha)
+                finally:
+                    self.engine.pop()
+                if score > best_score:
+                    best_score, best_move = score, move
+                alpha = max(alpha, score)
+                if alpha >= beta:
+                    self._remember_cutoff(board, move, ply, depth)
+                    break
+        finally:
+            self._path.pop()
+
+        if best_score <= original_alpha:
+            bound = UPPER
+        elif best_score >= beta:
+            bound = LOWER
+        else:
+            bound = EXACT
+        self._store(key, depth, best_score, bound, best_move)
+        return best_score
+
+    def _store(
+        self, key: Hashable, depth: int, score: int, bound: int, move: chess.Move | None
+    ) -> None:
+        if len(self.table) >= TT_MAX_ENTRIES:
+            # Crude, but it bounds memory well inside 2 GB and costs nothing on the
+            # hot path. Refilling is cheap next to running out of memory.
+            self.table.clear()
+        self.table[key] = (depth, score, bound, move)
+
+    def _quiescence(self, ply: int, alpha: int, beta: int) -> int:
+        """Search captures to a quiet position, so the evaluation is not mid-exchange."""
+        self._check_clock()
+        board = self.engine.board
+        in_check = board.is_check()
+
+        if in_check:
+            # No stand-pat while in check: the position may be a forced mate.
+            moves = self.ordered_moves(board, ply, None)
+            if not moves:
+                return -MATE + ply
+            best_score = -2 * MATE
+        else:
+            best_score = self.engine.evaluate()
+            if best_score >= beta:
+                return best_score
+            alpha = max(alpha, best_score)
+            moves = self.ordered_captures(board)
+
+        if ply >= MAX_PLY_LIMIT:
+            return self.engine.evaluate()
+
+        for move in moves:
+            self.engine.push(move)
+            try:
+                score = -self._quiescence(ply + 1, -beta, -alpha)
+            finally:
+                self.engine.pop()
+            best_score = max(best_score, score)
+            alpha = max(alpha, score)
+            if alpha >= beta:
+                break
+        return best_score
+
+    def warm_up(self) -> None:
+        """Compile the search's own code paths inside the import budget.
+
+        numba compiles per signature, and the platform gives 60 s before the clock
+        starts; paying that here is the whole point. Leaves no state behind.
+        """
+        self.pick(chess.STARTING_FEN, 200)
+        self.table.clear()
+        self.history.clear()
+        self.killers = [[] for _ in range(MAX_PLY_LIMIT + 1)]
+        self.game_history.clear()
+        self._last_fullmove = 0

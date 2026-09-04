@@ -4,7 +4,11 @@ These tests pin the properties that lose games when they break — the clock, le
 and the draw rules — rather than exact scores, which depend on the trained net.
 """
 
+import random
+import time as time_module
+
 import chess
+import pytest
 
 import search
 from nnue_engine import load_engine
@@ -105,3 +109,54 @@ def test_ordered_captures_are_all_captures_or_promotions() -> None:
     board = chess.Board("3r3k/8/8/8/8/8/6P1/3QK3 w - - 0 1")
     for move in searcher.ordered_captures(board):
         assert board.is_capture(move) or move.promotion is not None
+
+
+def test_finds_mate_in_one() -> None:
+    searcher = make_searcher()
+    # Back-rank mate: Ra1-a8 is forced mate, the black king is boxed in by its pawns.
+    move = searcher.pick("6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1", 10_000)
+    assert move == chess.Move.from_uci("a1a8")
+
+
+def test_takes_the_free_queen() -> None:
+    searcher = make_searcher()
+    move = searcher.pick("3q3k/8/8/8/8/8/8/3RK3 w - - 0 1", 10_000)
+    assert move == chess.Move.from_uci("d1d8")
+
+
+def test_returns_a_legal_move_when_in_check() -> None:
+    # Black king on h8 is checked along the open h-file by the rook on h1.
+    fen = "7k/8/8/8/8/8/6P1/6KR b - - 0 1"
+    searcher = make_searcher()
+    assert searcher.pick(fen, 5_000) in chess.Board(fen).legal_moves
+
+
+def test_never_returns_an_illegal_move() -> None:
+    searcher = make_searcher()
+    rng = random.Random(7)
+    for _ in range(40):
+        board = chess.Board()
+        for _ in range(rng.randint(2, 40)):
+            moves = list(board.legal_moves)
+            if not moves:
+                break
+            board.push(rng.choice(moves))
+        if board.is_game_over():
+            continue
+        assert searcher.pick(board.fen(), 300) in board.legal_moves
+
+
+def test_respects_a_tight_time_budget() -> None:
+    searcher = make_searcher()
+    started = time_module.monotonic()
+    searcher.pick(chess.STARTING_FEN, 1_000)
+    elapsed_ms = (time_module.monotonic() - started) * 1000.0
+    # budget_ms(1000) is ~283 ms; allow generous slack for a slow CI box.
+    assert elapsed_ms < 2_000
+
+
+def test_no_legal_moves_raises() -> None:
+    searcher = make_searcher()
+    # Black is stalemated.
+    with pytest.raises(ValueError):
+        searcher.pick("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1", 1_000)
