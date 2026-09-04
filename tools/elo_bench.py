@@ -46,17 +46,40 @@ OPENING_PLIES = 4
 FAILURE_TERMINATIONS = frozenset({"crash", "illegal", "flag", "init", "both_failed"})
 
 
+def stockfish_limit(nodes: int | None, time_left_ms: int, increment_ms: int) -> chess.engine.Limit:
+    """Fixed nodes when capped, otherwise our own clock mirrored to both sides.
+
+    A node cap makes Stockfish's strength monotonic and independent of the time
+    control, which `UCI_LimitStrength` is not at 120 s + 0.5 s. The referee hands each
+    side only its own remaining clock, which is what Stockfish's time manager needs for
+    its own move; the opponent's clock is mirrored from it.
+    """
+    if nodes is not None:
+        return chess.engine.Limit(nodes=nodes)
+    clock = time_left_ms / 1000.0
+    increment = increment_ms / 1000.0
+    return chess.engine.Limit(
+        white_clock=clock, black_clock=clock, white_inc=increment, black_inc=increment
+    )
+
+
+def describe_stockfish(elo: int | None, nodes: int | None) -> str:
+    if nodes is not None:
+        return f"Stockfish at {nodes} nodes"
+    return f"Stockfish UCI_Elo {elo}"
+
+
 class StockfishAgent(Agent):
     """Stockfish behind the harness's Agent interface, so the referee stays untouched.
 
-    The referee hands each side only its own remaining clock, which is what Stockfish's
-    time manager needs for its own move; the opponent's clock is mirrored from it.
+    Either weakened by `UCI_Elo` or at full strength capped to `nodes` per move.
     """
 
-    def __init__(self, path: Path, elo: int, increment_ms: int) -> None:
+    def __init__(self, path: Path, elo: int | None, nodes: int | None, increment_ms: int) -> None:
         super().__init__([str(path)])
         self.path = path
         self.elo = elo
+        self.nodes = nodes
         self.increment_ms = increment_ms
         self._engine: chess.engine.SimpleEngine | None = None
 
@@ -64,18 +87,15 @@ class StockfishAgent(Agent):
         engine = chess.engine.SimpleEngine.popen_uci(str(self.path))
         # One core and a small table, matching the constraints our own agent runs under.
         engine.configure({"Threads": 1, "Hash": 16})
-        engine.configure({"UCI_LimitStrength": True, "UCI_Elo": self.elo})
+        if self.elo is not None:
+            engine.configure({"UCI_LimitStrength": True, "UCI_Elo": self.elo})
         self._engine = engine
 
     def move(self, fen: str, time_left_ms: int) -> str:
         if self._engine is None:
             raise RuntimeError("stockfish moved before start")
         board = chess.Board(fen)
-        clock = time_left_ms / 1000.0
-        increment = self.increment_ms / 1000.0
-        limit = chess.engine.Limit(
-            white_clock=clock, black_clock=clock, white_inc=increment, black_inc=increment
-        )
+        limit = stockfish_limit(self.nodes, time_left_ms, self.increment_ms)
         try:
             played = self._engine.play(board, limit)
         except chess.engine.EngineError as error:
@@ -222,7 +242,8 @@ def opening_positions(count: int, seed: int, evaluate: Balancer) -> list[str]:
 def play_pair(
     agent_dir: Path,
     stockfish: Path,
-    elo: int,
+    elo: int | None,
+    nodes: int | None,
     fen: str,
     base_ms: int,
     increment_ms: int,
@@ -231,7 +252,7 @@ def play_pair(
     played: list[tuple[Outcome, bool]] = []
     for we_are_white in (True, False):
         us = local(agent_dir)
-        them = StockfishAgent(stockfish, elo, increment_ms)
+        them = StockfishAgent(stockfish, elo, nodes, increment_ms)
         white, black = (us, them) if we_are_white else (them, us)
         outcome = play_match(white, black, base_ms, increment_ms, PLY_CAP, start_fen=fen)
         played.append((outcome, we_are_white))
@@ -253,22 +274,27 @@ def record(tally: Tally, outcome: Outcome, we_were_white: bool) -> Tally:
     return Tally(tally.wins, tally.draws + 1, tally.losses, failures)
 
 
-def report(tally: Tally, elo: int) -> None:
+def report(tally: Tally, label: str, elo: int | None, sprt: Sprt | None = None) -> None:
     margin = score_margin(tally)
     centre = elo_difference(tally.score)
     low = elo_difference(max(0.0, tally.score - margin))
     high = elo_difference(min(1.0, tally.score + margin))
 
-    print(f"\n{tally.games} games: +{tally.wins} ={tally.draws} -{tally.losses}")
+    print(f"\n{tally.games} games vs {label}: +{tally.wins} ={tally.draws} -{tally.losses}")
     print(f"score {tally.score:.1%}")
     if math.isinf(centre):
         bound = "above" if centre > 0 else "below"
-        print(f"estimated rating: {bound} Stockfish {elo} (the result does not bracket it)")
+        print(f"rating: {bound} {label} (the result does not bracket it)")
     else:
         print(f"rating difference: {centre:+.0f} Elo (1 SE: {low:+.0f} to {high:+.0f})")
+        if elo is not None:
+            print(f"estimated rating: {elo + centre:.0f} ({elo + low:.0f} to {elo + high:.0f})")
+    if sprt is not None:
+        llr = log_likelihood_ratio(tally, sprt)
+        outcome = verdict(llr, sprt) or "undecided"
         print(
-            f"estimated rating: {elo + centre:.0f} "
-            f"({elo + low:.0f} to {elo + high:.0f})"
+            f"SPRT [{sprt.elo0:g}, {sprt.elo1:g}]: {outcome}, "
+            f"LLR {llr:+.2f} in [{sprt.lower:.2f}, {sprt.upper:.2f}]"
         )
     if tally.failures:
         print(f"\nWARNING: {len(tally.failures)} games lost to agent failure: {tally.failures}")
@@ -278,7 +304,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stockfish", type=Path, required=True)
     parser.add_argument("--agent", type=Path, default=Path("."))
-    parser.add_argument("--elo", type=int, required=True, help="Stockfish UCI_Elo to face")
+    opponent = parser.add_mutually_exclusive_group(required=True)
+    opponent.add_argument("--elo", type=int, help="Stockfish UCI_Elo to face")
+    opponent.add_argument("--nodes", type=int, help="full-strength Stockfish, N nodes per move")
     parser.add_argument("--games", type=int, default=20, help="rounded up to a colour pair")
     parser.add_argument("--base-ms", type=int, default=BASE_MS)
     parser.add_argument("--increment-ms", type=int, default=INCREMENT_MS)
@@ -292,12 +320,13 @@ def main() -> None:
         "core count or the wall clock the referee measures stops being honest",
     )
     arguments = parser.parse_args()
+    label = describe_stockfish(arguments.elo, arguments.nodes)
 
     pairs = max(1, (arguments.games + 1) // 2)
     openings = opening_positions(pairs, arguments.seed, Balancer())
 
     print(
-        f"agent vs Stockfish UCI_Elo {arguments.elo} | {pairs * 2} games "
+        f"agent vs {label} | {pairs * 2} games "
         f"| {arguments.base_ms / 1000:.0f}s + {arguments.increment_ms / 1000:.1f}s "
         f"| {arguments.workers} concurrent",
         flush=True,
@@ -315,6 +344,7 @@ def main() -> None:
             arguments.agent,
             arguments.stockfish,
             arguments.elo,
+            arguments.nodes,
             fen,
             arguments.base_ms,
             arguments.increment_ms,
@@ -336,7 +366,7 @@ def main() -> None:
     if arguments.pgn is not None:
         arguments.pgn.write_text("\n\n".join(games), encoding="utf-8")
 
-    report(tally, arguments.elo)
+    report(tally, label, arguments.elo)
 
 
 if __name__ == "__main__":

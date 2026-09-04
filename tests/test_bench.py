@@ -2,7 +2,15 @@
 
 import pytest
 
-from tools.elo_bench import Sprt, Tally, expected_score, log_likelihood_ratio, verdict
+from tools.elo_bench import (
+    Sprt,
+    Tally,
+    describe_stockfish,
+    expected_score,
+    log_likelihood_ratio,
+    stockfish_limit,
+    verdict,
+)
 
 
 def test_sprt_bounds_are_symmetric_at_equal_error_rates() -> None:
@@ -39,3 +47,21 @@ def test_a_sweep_accepts_and_a_wipeout_rejects() -> None:
     assert verdict(log_likelihood_ratio(Tally(40, 0, 0), sprt), sprt) == "accept"
     assert verdict(log_likelihood_ratio(Tally(0, 0, 40), sprt), sprt) == "reject"
     assert verdict(log_likelihood_ratio(Tally(10, 0, 10), sprt), sprt) is None
+
+
+def test_node_limit_ignores_the_clock() -> None:
+    limit = stockfish_limit(4_000, time_left_ms=120_000, increment_ms=500)
+    assert limit.nodes == 4_000
+    assert limit.white_clock is None and limit.black_clock is None
+
+
+def test_clock_limit_mirrors_our_clock_to_both_sides() -> None:
+    limit = stockfish_limit(None, time_left_ms=30_000, increment_ms=500)
+    assert limit.nodes is None
+    assert limit.white_clock == 30.0 and limit.black_clock == 30.0
+    assert limit.white_inc == 0.5 and limit.black_inc == 0.5
+
+
+def test_opponent_descriptions() -> None:
+    assert describe_stockfish(2200, None) == "Stockfish UCI_Elo 2200"
+    assert describe_stockfish(None, 4_000) == "Stockfish at 4000 nodes"
