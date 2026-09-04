@@ -256,3 +256,30 @@ def test_each_pick_starts_a_new_generation() -> None:
     before = searcher.generation
     searcher.pick(chess.STARTING_FEN, 300)
     assert searcher.generation == before + 1
+
+
+def fixed_depth(
+    searcher: search.Searcher,
+    fen: str,
+    depth: int,
+    previous_best: chess.Move | None = None,
+    alpha: int = -2 * search.MATE,
+    beta: int = 2 * search.MATE,
+) -> tuple[int, chess.Move | None]:
+    """Search one depth with no clock pressure, for tests that pin search mechanics."""
+    searcher.engine.set_position(fen)
+    searcher._deadline = time_module.monotonic() + 60.0
+    searcher._path.clear()
+    searcher.nodes = 0
+    return searcher._search_root(depth, previous_best, alpha, beta)
+
+
+def test_pvs_recovers_a_better_move_after_a_quiet_first_move() -> None:
+    # The first move is searched with the full window and a later one with a null
+    # window; that one fails high and must be re-searched to be trusted as best.
+    searcher = make_searcher()
+    fen = "3q3k/8/8/8/8/8/8/3RK3 w - - 0 1"
+    quiet_first = chess.Move.from_uci("e1e2")
+    score, move = fixed_depth(searcher, fen, 3, previous_best=quiet_first)
+    assert move == chess.Move.from_uci("d1d8")
+    assert score > 500 * 32  # a free queen, in 1/32 cp

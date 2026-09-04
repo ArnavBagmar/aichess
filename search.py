@@ -229,21 +229,47 @@ class Searcher:
                 break  # a forced mate is as good as it gets
         return best
 
-    def _search_root(self, depth: int, previous_best: chess.Move) -> tuple[int, chess.Move | None]:
+    def _search_root(
+        self,
+        depth: int,
+        previous_best: chess.Move | None,
+        alpha: int = -2 * MATE,
+        beta: int = 2 * MATE,
+    ) -> tuple[int, chess.Move | None]:
         board = self.engine.board
-        alpha = -2 * MATE
         best_score = -2 * MATE
         best_move: chess.Move | None = None
-        for move in self.ordered_moves(board, 0, previous_best):
+        for index, move in enumerate(self.ordered_moves(board, 0, previous_best)):
             self.engine.push(move)
             try:
-                score = -self._negamax(depth - 1, 1, -2 * MATE, -alpha)
+                score = self._pvs_child(index, depth - 1, 1, alpha, beta, reduction=0)
             finally:
                 self.engine.pop()
             if score > best_score:
                 best_score, best_move = score, move
             alpha = max(alpha, score)
+            if alpha >= beta:
+                break
         return best_score, best_move
+
+    def _pvs_child(
+        self, index: int, depth: int, ply: int, alpha: int, beta: int, reduction: int
+    ) -> int:
+        """Score the child already pushed, with the principal-variation scheme.
+
+        The first move gets the full window. Every later move is first asked only
+        "are you better than alpha?" with a null window, which is much cheaper; only a
+        yes earns a full search. A reduced move that says yes is first confirmed at full
+        depth with the null window, then, if still yes, with the full window.
+        """
+        if index == 0:
+            return -self._negamax(depth, ply, -beta, -alpha)
+        score = -self._negamax(depth - reduction, ply, -alpha - 1, -alpha)
+        if reduction and score > alpha:
+            score = -self._negamax(depth, ply, -alpha - 1, -alpha)
+        if alpha < score < beta:
+            score = -self._negamax(depth, ply, -beta, -alpha)
+        return score
 
     def _check_clock(self) -> None:
         self.nodes += 1
@@ -319,11 +345,7 @@ class Searcher:
                         and not self.engine.board.is_check()
                     ):
                         reduction = self._late_move_reduction(depth, index)
-                    score = -self._negamax(depth - 1 - reduction, ply + 1, -beta, -alpha)
-                    if reduction and score > alpha:
-                        # The shallow search rates this move better than the ordering
-                        # assumed, so the reduction was wrong here: confirm at full depth.
-                        score = -self._negamax(depth - 1, ply + 1, -beta, -alpha)
+                    score = self._pvs_child(index, depth - 1, ply + 1, alpha, beta, reduction)
                 finally:
                     self.engine.pop()
                 if score > best_score:
