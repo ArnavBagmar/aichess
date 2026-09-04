@@ -303,3 +303,6 @@ be measured should not displace work that can.
   21,132 to 23,187 nodes/s (9.7%) without changing search semantics. The optimized build scored
   `+9 =5 -6` against its checkpoint over 20 real-position games (+52.5 unanchored Elo), with no
   failures.
+- On the identical five-pair Stockfish 2000 target suite, that promoted build improved from 25% to
+  40% (`+4 =0 -6`), reducing the unanchored gap from about -191 to -70 Elo. The sample is too small
+  to claim a rating, so 40% is the next checkpoint to beat with a larger confirmation run.
