@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import statistics
+from itertools import islice
 from pathlib import Path
 
 from harness.referee import FAILED_TERMINATIONS, Outcome, play_match
@@ -49,6 +50,12 @@ def main() -> None:
     parser.add_argument("--agent", type=Path, default=Path("."))
     parser.add_argument("--opponent", type=Path, required=True)
     parser.add_argument("--positions", type=int, default=4)
+    parser.add_argument(
+        "--skip-positions",
+        type=int,
+        default=0,
+        help="skip this many JSONL positions before selecting the test sample",
+    )
     parser.add_argument("--base-ms", type=int, default=5_000)
     parser.add_argument("--increment-ms", type=int, default=100)
     parser.add_argument("--pgn-dir", type=Path)
@@ -64,10 +71,17 @@ def main() -> None:
             json.loads(line)
             for line in arguments.fen_jsonl.read_text(encoding="utf-8").splitlines()
         )
-        selected = tuple(
+        positions = (
             Position(f"dataset_{index:04}", "dataset", record["fen"])
             for index, record in enumerate(records, 1)
-        )[: arguments.positions]
+        )
+        selected = tuple(
+            islice(
+                positions,
+                max(0, arguments.skip_positions),
+                max(0, arguments.skip_positions) + arguments.positions,
+            )
+        )
     else:
         selected = POSITIONS[: max(1, min(arguments.positions, len(POSITIONS)))]
     if not selected:
