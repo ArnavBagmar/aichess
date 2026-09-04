@@ -219,3 +219,40 @@ def test_reduction_grows_for_later_moves_at_depth() -> None:
     searcher = make_searcher()
     assert searcher._late_move_reduction(search.LMR_DEEP, search.LMR_LATE_MOVES) == 2
     assert searcher._late_move_reduction(search.LMR_MIN_DEPTH, search.LMR_MIN_MOVES) == 1
+
+
+def test_mate_scores_are_stored_relative_to_the_node() -> None:
+    # A mate two plies below a node at ply 3 is "mate in 5" from the root. Stored
+    # relative to the node it is "mate in 2", and read back at ply 1 it is "mate in 3".
+    searcher = make_searcher()
+    searcher._store("key", depth=3, score=search.MATE - 5, bound=search.EXACT, move=None, ply=3)
+    stored = searcher.table["key"][1]
+    assert stored == search.MATE - 2
+    assert search.from_tt_score(stored, ply=1) == search.MATE - 3
+
+
+def test_losing_mate_scores_convert_the_same_way() -> None:
+    assert search.to_tt_score(-search.MATE + 5, ply=3) == -search.MATE + 2
+    assert search.from_tt_score(-search.MATE + 2, ply=1) == -search.MATE + 3
+
+
+def test_ordinary_scores_pass_through_the_table_unchanged() -> None:
+    assert search.to_tt_score(123, ply=7) == 123
+    assert search.from_tt_score(-123, ply=7) == -123
+
+
+def test_shallower_entries_do_not_replace_deeper_ones_from_the_same_search() -> None:
+    searcher = make_searcher()
+    searcher._store("key", depth=5, score=10, bound=search.EXACT, move=None, ply=0)
+    searcher._store("key", depth=2, score=20, bound=search.EXACT, move=None, ply=0)
+    assert searcher.table["key"][0] == 5
+    searcher.generation += 1
+    searcher._store("key", depth=2, score=20, bound=search.EXACT, move=None, ply=0)
+    assert searcher.table["key"][0] == 2
+
+
+def test_each_pick_starts_a_new_generation() -> None:
+    searcher = make_searcher()
+    before = searcher.generation
+    searcher.pick(chess.STARTING_FEN, 300)
+    assert searcher.generation == before + 1

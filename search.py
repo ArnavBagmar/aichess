@@ -20,6 +20,9 @@ MATE: Final = 1_000_000
 MAX_DEPTH: Final = 64
 MAX_PLY_LIMIT: Final = 128  # well inside nnue_engine.MAX_PLY (256)
 
+# Scores at or beyond this magnitude are mates, and their distance is meaningful.
+MATE_THRESHOLD: Final = MATE - MAX_PLY_LIMIT
+
 TT_MAX_ENTRIES: Final = 200_000
 CLOCK_CHECK_NODES: Final = 2048
 
@@ -79,7 +82,30 @@ EXACT: Final = 0
 LOWER: Final = 1
 UPPER: Final = 2
 
-TTEntry = tuple[int, int, int, chess.Move | None]  # depth, score, bound, best move
+TTEntry = tuple[int, int, int, chess.Move | None, int]  # depth, score, bound, move, generation
+
+
+def to_tt_score(score: int, ply: int) -> int:
+    """Convert a root-relative mate score to a node-relative one for storage.
+
+    A mate scores MATE - (plies from the root). Two paths reaching the same position
+    at different plies must agree on the entry, so the table holds MATE - (plies from
+    this node) instead, and the probe converts back.
+    """
+    if score >= MATE_THRESHOLD:
+        return score + ply
+    if score <= -MATE_THRESHOLD:
+        return score - ply
+    return score
+
+
+def from_tt_score(score: int, ply: int) -> int:
+    """Inverse of to_tt_score, for a probe at `ply`."""
+    if score >= MATE_THRESHOLD:
+        return score - ply
+    if score <= -MATE_THRESHOLD:
+        return score + ply
+    return score
 
 
 class Searcher:
@@ -96,6 +122,7 @@ class Searcher:
         self.history: dict[tuple[int, int], int] = {}
         self.game_history: list[Hashable] = []
         self.nodes = 0
+        self.generation = 0  # one per pick, so replacement can prefer this search's work
         self._deadline = 0.0
         self._path: list[Hashable] = []
         self._last_fullmove = 0
@@ -185,6 +212,7 @@ class Searcher:
         self.note_root_position(board)
         self._deadline = time.monotonic() + budget_ms(time_left_ms) / 1000.0
         self.nodes = 0
+        self.generation += 1
         self._path.clear()
 
         best = moves[0]
@@ -195,7 +223,7 @@ class Searcher:
                 break  # discard this depth entirely; it has a biased best move
             if move is not None:
                 best = move
-            if abs(score) >= MATE - MAX_PLY_LIMIT:
+            if abs(score) >= MATE_THRESHOLD:
                 break  # a forced mate is as good as it gets
         return best
 
@@ -232,8 +260,9 @@ class Searcher:
         tt_move: chess.Move | None = None
         entry = self.table.get(key)
         if entry is not None:
-            stored_depth, stored_score, stored_bound, tt_move = entry
+            stored_depth, raw_score, stored_bound, tt_move, _ = entry
             if stored_depth >= depth:
+                stored_score = from_tt_score(raw_score, ply)
                 if stored_bound == EXACT:
                     return stored_score
                 if stored_bound == LOWER and stored_score >= beta:
@@ -255,7 +284,7 @@ class Searcher:
             allow_null
             and depth >= NULL_MIN_DEPTH
             and not in_check
-            and beta < MATE - MAX_PLY_LIMIT
+            and beta < MATE_THRESHOLD
             and self._has_major_material(board)
         ):
             self.engine.push_null()
@@ -310,7 +339,7 @@ class Searcher:
             bound = LOWER
         else:
             bound = EXACT
-        self._store(key, depth, best_score, bound, best_move)
+        self._store(key, depth, best_score, bound, best_move, ply)
         return best_score
 
     @staticmethod
@@ -331,13 +360,23 @@ class Searcher:
         return 1
 
     def _store(
-        self, key: Hashable, depth: int, score: int, bound: int, move: chess.Move | None
+        self,
+        key: Hashable,
+        depth: int,
+        score: int,
+        bound: int,
+        move: chess.Move | None,
+        ply: int,
     ) -> None:
-        if len(self.table) >= TT_MAX_ENTRIES:
+        existing = self.table.get(key)
+        if existing is not None:
+            if existing[4] == self.generation and existing[0] > depth:
+                return  # a deeper result from this very search outranks a shallower one
+        elif len(self.table) >= TT_MAX_ENTRIES:
             # Crude, but it bounds memory well inside 2 GB and costs nothing on the
             # hot path. Refilling is cheap next to running out of memory.
             self.table.clear()
-        self.table[key] = (depth, score, bound, move)
+        self.table[key] = (depth, to_tt_score(score, ply), bound, move, self.generation)
 
     def _quiescence(self, ply: int, alpha: int, beta: int) -> int:
         """Search captures to a quiet position, so the evaluation is not mid-exchange."""
