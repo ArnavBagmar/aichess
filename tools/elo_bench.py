@@ -16,15 +16,16 @@ own evaluation, and each is played twice with colours reversed, which is both th
 standard way to cut variance and closer to the event's curated start positions.
 
 Usage:
-    uv run python tools/elo_bench.py --stockfish PATH --elo 1600 --games 20
+    uv run python tools/elo_bench.py --stockfish PATH --nodes 4000 --games 20
+    uv run python tools/elo_bench.py --opponent ../aichessathon-base --sprt --workers 3
 """
 
 import argparse
 import math
 import random
 import sys
-import threading
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,11 +38,20 @@ sys.path.insert(0, str(REPO))
 from harness.referee import Outcome, play_match  # noqa: E402
 from harness.rules import BASE_MS, INCREMENT_MS, PLY_CAP  # noqa: E402
 from harness.sandbox import Agent, AgentFailure, local  # noqa: E402
+from nnue_arch import WEIGHTS_FILE  # noqa: E402
 
 # Positions are accepted as openings only if our own eval calls them near-equal, so a
 # pair is not decided before it starts. In centipawns.
 BALANCE_CP = 90.0
 OPENING_PLIES = 4
+
+# Self-play SPRT runs on a short base with the platform's real increment: the question
+# is which of two versions is stronger, and a short clock answers it in a fraction of
+# the time, while the real increment keeps the agent's time manager honest (at 0.1 s it
+# overspends by ~200 ms a move and flags in long games, which is pure noise).
+SPRT_BASE_MS = 10_000
+SPRT_INCREMENT_MS = 500
+SPRT_MAX_GAMES = 400
 
 FAILURE_TERMINATIONS = frozenset({"crash", "illegal", "flag", "init", "both_failed"})
 
@@ -239,11 +249,52 @@ def opening_positions(count: int, seed: int, evaluate: Balancer) -> list[str]:
     return positions
 
 
+def check_agent_dir(directory: Path) -> Path:
+    """Fail early, by name, rather than let an opponent crash at init and score a loss."""
+    directory = directory.resolve()
+    if not (directory / "agent.py").is_file():
+        raise SystemExit(f"{directory} has no agent.py")
+    weights = directory / "weights" / WEIGHTS_FILE
+    if not weights.is_file():
+        raise SystemExit(
+            f"{directory} has no weights/{WEIGHTS_FILE}; it is gitignored, copy it from this repo"
+        )
+    return directory
+
+
+def run_pairs[T](
+    openings: list[str],
+    workers: int,
+    play: Callable[[str], T],
+    on_pair: Callable[[T], bool],
+) -> None:
+    """Play openings on `workers` threads until they run out or `on_pair` returns True.
+
+    `on_pair` runs on the calling thread, so it needs no lock. Pairs already in flight
+    when it asks to stop are allowed to finish and are reported too.
+    """
+    remaining = iter(openings)
+    stop = False
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        pending: set[Future[T]] = set()
+        while True:
+            while not stop and len(pending) < workers:
+                fen = next(remaining, None)
+                if fen is None:
+                    stop = True
+                    break
+                pending.add(pool.submit(play, fen))
+            if not pending:
+                break
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                if on_pair(future.result()):
+                    stop = True
+
+
 def play_pair(
     agent_dir: Path,
-    stockfish: Path,
-    elo: int | None,
-    nodes: int | None,
+    make_opponent: Callable[[], Agent],
     fen: str,
     base_ms: int,
     increment_ms: int,
@@ -252,7 +303,7 @@ def play_pair(
     played: list[tuple[Outcome, bool]] = []
     for we_are_white in (True, False):
         us = local(agent_dir)
-        them = StockfishAgent(stockfish, elo, nodes, increment_ms)
+        them = make_opponent()
         white, black = (us, them) if we_are_white else (them, us)
         outcome = play_match(white, black, base_ms, increment_ms, PLY_CAP, start_fen=fen)
         played.append((outcome, we_are_white))
@@ -302,14 +353,18 @@ def report(tally: Tally, label: str, elo: int | None, sprt: Sprt | None = None) 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stockfish", type=Path, required=True)
     parser.add_argument("--agent", type=Path, default=Path("."))
     opponent = parser.add_mutually_exclusive_group(required=True)
     opponent.add_argument("--elo", type=int, help="Stockfish UCI_Elo to face")
     opponent.add_argument("--nodes", type=int, help="full-strength Stockfish, N nodes per move")
-    parser.add_argument("--games", type=int, default=20, help="rounded up to a colour pair")
-    parser.add_argument("--base-ms", type=int, default=BASE_MS)
-    parser.add_argument("--increment-ms", type=int, default=INCREMENT_MS)
+    opponent.add_argument("--opponent", type=Path, help="another agent directory to face")
+    parser.add_argument("--stockfish", type=Path, default=None)
+    parser.add_argument("--games", type=int, default=None, help="rounded up to a colour pair")
+    parser.add_argument("--sprt", action="store_true", help="stop at a verdict, not a count")
+    parser.add_argument("--elo0", type=float, default=0.0)
+    parser.add_argument("--elo1", type=float, default=20.0)
+    parser.add_argument("--base-ms", type=int, default=None)
+    parser.add_argument("--increment-ms", type=int, default=None)
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--pgn", type=Path, default=None)
     parser.add_argument(
@@ -320,53 +375,70 @@ def main() -> None:
         "core count or the wall clock the referee measures stops being honest",
     )
     arguments = parser.parse_args()
-    label = describe_stockfish(arguments.elo, arguments.nodes)
 
-    pairs = max(1, (arguments.games + 1) // 2)
+    sprt = Sprt(arguments.elo0, arguments.elo1) if arguments.sprt else None
+    base_ms = arguments.base_ms or (SPRT_BASE_MS if sprt else BASE_MS)
+    increment_ms = arguments.increment_ms or (SPRT_INCREMENT_MS if sprt else INCREMENT_MS)
+    games = arguments.games or (SPRT_MAX_GAMES if sprt else 20)
+
+    make_opponent: Callable[[], Agent]
+    if arguments.opponent is not None:
+        opponent_dir = check_agent_dir(arguments.opponent)
+        label = f"agent at {opponent_dir}"
+
+        def make_opponent() -> Agent:
+            return local(opponent_dir)
+    else:
+        if arguments.stockfish is None:
+            parser.error("--stockfish is required with --elo or --nodes")
+        stockfish, elo, nodes = arguments.stockfish, arguments.elo, arguments.nodes
+        label = describe_stockfish(elo, nodes)
+
+        def make_opponent() -> Agent:
+            return StockfishAgent(stockfish, elo, nodes, increment_ms)
+
+    check_agent_dir(arguments.agent)
+    pairs = max(1, (games + 1) // 2)
     openings = opening_positions(pairs, arguments.seed, Balancer())
 
     print(
-        f"agent vs {label} | {pairs * 2} games "
-        f"| {arguments.base_ms / 1000:.0f}s + {arguments.increment_ms / 1000:.1f}s "
-        f"| {arguments.workers} concurrent",
+        f"agent vs {label} | up to {pairs * 2} games "
+        f"| {base_ms / 1000:.0f}s + {increment_ms / 1000:.1f}s "
+        f"| {arguments.workers} concurrent"
+        + (f" | SPRT [{sprt.elo0:g}, {sprt.elo1:g}]" if sprt else ""),
         flush=True,
     )
 
     tally = Tally()
-    games: list[str] = []
-    lock = threading.Lock()
+    pgn_games: list[str] = []
     done = 0
 
-    def run(fen: str) -> None:
-        """One colour pair. Each side still gets exactly one core; only games overlap."""
-        nonlocal tally, done
-        played = play_pair(
-            arguments.agent,
-            arguments.stockfish,
-            arguments.elo,
-            arguments.nodes,
-            fen,
-            arguments.base_ms,
-            arguments.increment_ms,
-        )
-        with lock:
-            for outcome, we_were_white in played:
-                tally = record(tally, outcome, we_were_white)
-                games.append(outcome.pgn)
-            done += 1
-            print(
-                f"pair {done}/{pairs}: +{tally.wins} ={tally.draws} -{tally.losses} "
-                f"({tally.score:.1%})",
-                flush=True,
-            )
+    def play(fen: str) -> list[tuple[Outcome, bool]]:
+        return play_pair(arguments.agent, make_opponent, fen, base_ms, increment_ms)
 
-    with ThreadPoolExecutor(max_workers=arguments.workers) as pool:
-        list(pool.map(run, openings))
+    def on_pair(played: list[tuple[Outcome, bool]]) -> bool:
+        nonlocal tally, done
+        for outcome, we_were_white in played:
+            tally = record(tally, outcome, we_were_white)
+            pgn_games.append(outcome.pgn)
+        done += 1
+        line = (
+            f"pair {done}/{pairs}: +{tally.wins} ={tally.draws} -{tally.losses} "
+            f"({tally.score:.1%})"
+        )
+        if sprt is None:
+            print(line, flush=True)
+            return False
+        llr = log_likelihood_ratio(tally, sprt)
+        print(f"{line} LLR {llr:+.2f} [{sprt.lower:.2f}, {sprt.upper:.2f}]", flush=True)
+        return verdict(llr, sprt) is not None
+
+    run_pairs(openings, arguments.workers, play, on_pair)
 
     if arguments.pgn is not None:
-        arguments.pgn.write_text("\n\n".join(games), encoding="utf-8")
+        arguments.pgn.write_text("\n\n".join(pgn_games), encoding="utf-8")
 
-    report(tally, label, arguments.elo)
+    report(tally, label, arguments.elo, sprt)
 
 
 if __name__ == "__main__":

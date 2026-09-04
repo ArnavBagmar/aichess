@@ -375,7 +375,7 @@ git commit -m "feat(tools): bench against node-limited Stockfish"
 
 **Interfaces:**
 - Consumes: `Sprt`, `log_likelihood_ratio`, `verdict` (Task 1); `StockfishAgent`, `describe_stockfish`, `report` (Task 2); `harness.sandbox.local`, `Agent`.
-- Produces: `check_agent_dir(directory: Path) -> Path`; `run_pairs[T](openings: list[str], workers: int, play: Callable[[str], T], on_pair: Callable[[T], bool]) -> None`; `play_pair(agent_dir: Path, make_opponent: Callable[[], Agent], fen: str, base_ms: int, increment_ms: int) -> list[tuple[Outcome, bool]]`; module constants `SPRT_BASE_MS = 10_000`, `SPRT_INCREMENT_MS = 100`, `SPRT_MAX_GAMES = 400`.
+- Produces: `check_agent_dir(directory: Path) -> Path`; `run_pairs[T](openings: list[str], workers: int, play: Callable[[str], T], on_pair: Callable[[T], bool]) -> None`; `play_pair(agent_dir: Path, make_opponent: Callable[[], Agent], fen: str, base_ms: int, increment_ms: int) -> list[tuple[Outcome, bool]]`; module constants `SPRT_BASE_MS = 10_000`, `SPRT_INCREMENT_MS = 500`, `SPRT_MAX_GAMES = 400`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -451,10 +451,12 @@ from nnue_arch import WEIGHTS_FILE  # noqa: E402
 Add near the other module constants:
 
 ```python
-# Self-play SPRT runs on the arena clock: the question is which of two versions is
-# stronger, and the faster clock answers it in a fraction of the time.
+# Self-play SPRT runs on a short base with the platform's real increment: the question
+# is which of two versions is stronger, and a short clock answers it in a fraction of
+# the time, while the real increment keeps the agent's time manager honest (at 0.1 s it
+# overspends by ~200 ms a move and flags in long games, which is pure noise).
 SPRT_BASE_MS = 10_000
-SPRT_INCREMENT_MS = 100
+SPRT_INCREMENT_MS = 500
 SPRT_MAX_GAMES = 400
 ```
 
@@ -637,7 +639,7 @@ uv run python tools/elo_bench.py --opponent ../aichessathon-base --games 2 --spr
 git worktree remove ../aichessathon-base
 ```
 
-Expected: header says `agent vs agent at ...`, one pair plays at 10 s + 0.1 s, the pair line carries an LLR, the report ends with an `SPRT [0, 20]: undecided` line.
+Expected: header says `agent vs agent at ...`, one pair plays at 10 s + 0.5 s, the pair line carries an LLR, the report ends with an `SPRT [0, 20]: undecided` line.
 
 - [ ] **Step 6: Lint, type-check, commit**
 

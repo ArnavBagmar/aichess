@@ -1,13 +1,17 @@
 """The bench's arithmetic and scheduling, tested without launching a single game."""
 
+from pathlib import Path
+
 import pytest
 
 from tools.elo_bench import (
     Sprt,
     Tally,
+    check_agent_dir,
     describe_stockfish,
     expected_score,
     log_likelihood_ratio,
+    run_pairs,
     stockfish_limit,
     verdict,
 )
@@ -65,3 +69,44 @@ def test_clock_limit_mirrors_our_clock_to_both_sides() -> None:
 def test_opponent_descriptions() -> None:
     assert describe_stockfish(2200, None) == "Stockfish UCI_Elo 2200"
     assert describe_stockfish(None, 4_000) == "Stockfish at 4000 nodes"
+
+
+def test_run_pairs_stops_scheduling_after_the_verdict() -> None:
+    played: list[str] = []
+    seen: list[str] = []
+
+    def play(fen: str) -> str:
+        played.append(fen)
+        return fen
+
+    def on_pair(result: str) -> bool:
+        seen.append(result)
+        return len(seen) >= 3
+
+    run_pairs([str(i) for i in range(20)], workers=2, play=play, on_pair=on_pair)
+    assert len(seen) >= 3
+    # Only pairs already in flight when the verdict landed may finish after it.
+    assert len(played) <= 3 + 2 - 1
+    assert set(seen) == set(played)
+
+
+def test_run_pairs_plays_everything_when_nothing_stops_it() -> None:
+    seen: list[str] = []
+
+    def on_pair(result: str) -> bool:
+        seen.append(result)
+        return False
+
+    run_pairs(["a", "b", "c"], workers=2, play=lambda fen: fen, on_pair=on_pair)
+    assert sorted(seen) == ["a", "b", "c"]
+
+
+def test_agent_dir_must_hold_agent_and_weights(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match=r"agent.py"):
+        check_agent_dir(tmp_path)
+    (tmp_path / "agent.py").write_text("")
+    with pytest.raises(SystemExit, match=r"nnue.npz"):
+        check_agent_dir(tmp_path)
+    (tmp_path / "weights").mkdir()
+    (tmp_path / "weights" / "nnue.npz").write_bytes(b"")
+    assert check_agent_dir(tmp_path) == tmp_path.resolve()

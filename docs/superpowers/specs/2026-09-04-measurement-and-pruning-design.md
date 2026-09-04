@@ -92,11 +92,13 @@ the pair that crosses a bound. `--games` becomes a ceiling in SPRT mode, default
 400, so a change that is exactly on the boundary cannot run forever. The report prints
 the verdict, the LLR, the bounds, and the usual tally.
 
-A `--sprt` run in the default configuration uses the arena clock, 10 s + 0.1 s, not the
-platform's, because self-play is about the difference between two versions and the
-faster clock resolves that difference in a fraction of the time. The phase 4 spec's
-warning stands: local scores at that clock understate absolute strength. They do not
-mis-order two versions of the same engine.
+A `--sprt` run in the default configuration uses a 10 s base with the platform's real
+0.5 s increment, because self-play is about the difference between two versions and the
+short base resolves that difference in a fraction of the time. The increment is kept
+because the search budgets for it: at the arena's 0.1 s it overspends by about 200 ms a
+move and flags in long games (seen in the Task 2 smoke test), and flagged games are
+noise. The phase 4 spec's warning stands: local scores at a short clock understate
+absolute strength. They do not mis-order two versions of the same engine.
 
 ### 1c. Node-limited Stockfish: `--nodes N`
 
