@@ -313,3 +313,10 @@ be measured should not displace work that can.
   95% score interval of roughly 34.9%--50.1%, or about -108 to +1 Elo. This is evidence of a much
   smaller gap than the first ladder suggested, but it does not establish a 2000 rating; the next
   gains must come from diagnosed failures rather than interpreting match noise.
+- A competition-control spot check replayed the first two pairs at 120+0.5. The engine scored
+  `+2 =1 -1` (62.5%, 2.5/4) versus 1/4 on those same pairs at 3+0.1, with no failures. On the first
+  pair it improved from 0/2 to 1.5/2. Teacher analysis explains why: after `17.Nxe6!`, the engine
+  does not recognize the winning tactical resolution until fixed depth 6; fast play completed only
+  depth 2--3, while official-time play can cross that horizon. Four games are not a rating sample,
+  but they demonstrate that fast-control Elo is not a reliable absolute estimate of official-time
+  strength. Keep fast games for paired change detection and confirm major changes at 120+0.5.
