@@ -24,7 +24,9 @@ MAX_PLY_LIMIT: Final = 128  # well inside nnue_engine.MAX_PLY (256)
 MATE_THRESHOLD: Final = MATE - MAX_PLY_LIMIT
 
 TT_MAX_ENTRIES: Final = 200_000
-CLOCK_CHECK_NODES: Final = 2048
+# At ~15-20 knps this is a 15-25 ms blind spot between clock checks; 2048 was up to
+# 150 ms on a loaded machine, enough to flag at a short increment.
+CLOCK_CHECK_NODES: Final = 256
 
 # Time control. Every term but INCREMENT_MS comes from the clock we were handed.
 MOVES_REMAINING: Final = 30  # assumed horizon; self-correcting as the clock changes
