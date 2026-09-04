@@ -338,3 +338,11 @@ be measured should not displace work that can.
   `17.Nxe6!` horizon failure and rejected. It still missed the tactic at depth 5 while increasing
   that search from roughly 73,000 to 89,000 nodes. Do not reintroduce broad queen-threat extensions
   without a substantially cheaper and better-targeted formulation.
+- The first predeclared official-control confirmation against Stockfish 18's 2000-limited setting
+  used ten realistic positions, reversed colors, at 120+0.5 with 100 ms Stockfish moves. The current
+  build scored `+12 =4 -4` over 20 games (70.0%, +147.2 unanchored Elo), with pentanomial counts
+  `[0, 0, 4, 4, 2]`, no agent failures, and no opponent failures. The approximate pair-aware 95%
+  score interval was 57.8%--82.2% (+54.5 to +266.1 Elo), entirely above 50% for this sample. This
+  is strong evidence that the bot exceeds this particular limited-strength opponent under the
+  competition clock, but it is not a universal or formally anchored 2000 rating: confirm on more
+  distinct positions and, when available, the actual public competition ladder.
