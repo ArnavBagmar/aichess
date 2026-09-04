@@ -23,6 +23,8 @@ import argparse
 import math
 import random
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -227,6 +229,13 @@ def main() -> None:
     parser.add_argument("--increment-ms", type=int, default=INCREMENT_MS)
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--pgn", type=Path, default=None)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="colour pairs to play concurrently; keep workers*2 within the physical "
+        "core count or the wall clock the referee measures stops being honest",
+    )
     arguments = parser.parse_args()
 
     pairs = max(1, (arguments.games + 1) // 2)
@@ -234,28 +243,40 @@ def main() -> None:
 
     print(
         f"agent vs Stockfish UCI_Elo {arguments.elo} | {pairs * 2} games "
-        f"| {arguments.base_ms / 1000:.0f}s + {arguments.increment_ms / 1000:.1f}s",
+        f"| {arguments.base_ms / 1000:.0f}s + {arguments.increment_ms / 1000:.1f}s "
+        f"| {arguments.workers} concurrent",
         flush=True,
     )
 
     tally = Tally()
     games: list[str] = []
-    for index, fen in enumerate(openings, start=1):
-        for outcome, we_were_white in play_pair(
+    lock = threading.Lock()
+    done = 0
+
+    def run(fen: str) -> None:
+        """One colour pair. Each side still gets exactly one core; only games overlap."""
+        nonlocal tally, done
+        played = play_pair(
             arguments.agent,
             arguments.stockfish,
             arguments.elo,
             fen,
             arguments.base_ms,
             arguments.increment_ms,
-        ):
-            tally = record(tally, outcome, we_were_white)
-            games.append(outcome.pgn)
-        print(
-            f"pair {index}/{pairs}: +{tally.wins} ={tally.draws} -{tally.losses} "
-            f"({tally.score:.1%})",
-            flush=True,
         )
+        with lock:
+            for outcome, we_were_white in played:
+                tally = record(tally, outcome, we_were_white)
+                games.append(outcome.pgn)
+            done += 1
+            print(
+                f"pair {done}/{pairs}: +{tally.wins} ={tally.draws} -{tally.losses} "
+                f"({tally.score:.1%})",
+                flush=True,
+            )
+
+    with ThreadPoolExecutor(max_workers=arguments.workers) as pool:
+        list(pool.map(run, openings))
 
     if arguments.pgn is not None:
         arguments.pgn.write_text("\n\n".join(games), encoding="utf-8")
