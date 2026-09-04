@@ -346,3 +346,10 @@ def test_reverse_futility_never_fires_in_check_deep_or_near_mate() -> None:
     assert not search.reverse_futility_cutoff(huge, depth=too_deep, beta=0, in_check=False)
     mate = search.MATE_THRESHOLD
     assert not search.reverse_futility_cutoff(huge, depth=1, beta=mate, in_check=False)
+
+
+def test_is_draw_accepts_a_precomputed_key() -> None:
+    searcher = make_searcher()
+    board = chess.Board()
+    searcher.note_root_position(board)
+    assert searcher.is_draw(board, 1, board._transposition_key())

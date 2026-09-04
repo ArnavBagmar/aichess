@@ -190,13 +190,14 @@ class Searcher:
         self._last_fullmove = board.fullmove_number
         self.game_history.append(board._transposition_key())
 
-    def is_draw(self, board: chess.Board, ply: int) -> bool:
+    def is_draw(self, board: chess.Board, ply: int, key: Hashable | None = None) -> bool:
         """Whether this node should score as a draw. Never true at the root."""
         if ply == 0:
             return False
         if board.halfmove_clock >= 100 or board.is_insufficient_material():
             return True
-        key = board._transposition_key()
+        if key is None:
+            key = board._transposition_key()
         return key in self._path or key in self.game_history
 
     def _capture_score(self, board: chess.Board, move: chess.Move) -> int:
@@ -340,10 +341,10 @@ class Searcher:
     ) -> int:
         self._check_clock()
         board = self.engine.board
-        if self.is_draw(board, ply):
+        key = board._transposition_key()
+        if self.is_draw(board, ply, key):
             return 0
 
-        key = board._transposition_key()
         tt_move: chess.Move | None = None
         entry = self.table.get(key)
         if entry is not None:

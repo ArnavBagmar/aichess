@@ -225,3 +225,39 @@ cheap.
   `--max-time 00:06:00:00` is the safety stop. When it ends: export with
   `tools/export_net.py`, verify with `tools/verify_export.py` in the trainer's venv, and
   SPRT the new net against the old one with the bench from Part 1.
+
+### Baseline speed, Task 4
+
+`tools/nps.py` at 17:55, measured while the 100-game self-play sanity run and the GPU
+training shared the CPU, so about 60% of the quiet-machine figure in the phase 4 spec:
+
+```
+opening        30720 nodes    13.2 knps
+middlegame     28672 nodes    12.5 knps
+tactical       28672 nodes    12.1 knps
+endgame        34816 nodes    15.2 knps
+overall       122880 nodes    13.2 knps
+```
+
+Speed comparisons in this phase are therefore made back to back, old tree against new
+tree under the same load, never against this table.
+
+### Two fixes surfaced by the gate, not in the plan
+
+- **Clock check every 256 nodes** (was 2048). On the loaded machine the 2048-node gap
+  reached 150 ms and the gate's 5 s + 0.1 s games flagged; traces of both trees showed
+  the same overspend, so it was not the mate-score change. Committed separately.
+- **Aspiration fail-low must not name a best move.** The first version adopted the
+  root's best move after a fail-low; those are null-window fail-soft scores and are not
+  comparable, and `test_takes_the_free_queen` caught it when the clock cut the
+  re-search short. Only a fail-high names a move.
+
+### Task 10, staged move generation: measured neutral, not kept
+
+Two variants were measured interleaved against the previous commit's worktree under the
+same load. Generating captures and quiets in separate python-chess calls: 14.6 vs
+14.7 knps. Generating once and classifying captures with bitboard tests, sorting only the
+stage reached: 14.7 vs 14.6 knps. Move ordering overhead is not where the time goes;
+python-chess push/pop and the accumulator update are, as the phase 4 profile said. Only
+the one-key-per-node change was kept. The speed lever remains a bitboard movegen, which
+is its own spec.
