@@ -366,3 +366,39 @@ def test_delta_pruning_skips_captures_that_cannot_reach_alpha() -> None:
     assert not search.delta_pruned(static=on_margin, victim=chess.PAWN, alpha=alpha)
     just_under = alpha - queen - search.DELTA_MARGIN - 1
     assert search.delta_pruned(static=just_under, victim=chess.QUEEN, alpha=alpha)
+
+
+def test_see_scores_a_free_pawn_and_a_defended_one() -> None:
+    # Rook takes an undefended pawn: +1. Rook takes a pawn defended by a pawn: 1 - 5.
+    free = chess.Board("4k3/8/8/3p4/8/8/8/3RK3 w - - 0 1")
+    assert search.static_exchange(free, chess.Move.from_uci("d1d5")) == 1
+    defended = chess.Board("4k3/8/4p3/3p4/8/8/8/3RK3 w - - 0 1")
+    assert search.static_exchange(defended, chess.Move.from_uci("d1d5")) == 1 - 5
+
+
+def test_see_lets_the_defender_decline_a_losing_recapture() -> None:
+    # Pawn takes knight; the bishop could recapture but would fall to the rook, so
+    # the exchange stops at the knight: +3, not 3 - 1 + 3.
+    board = chess.Board("4k3/8/2b5/3n4/2P5/8/8/3RK3 w - - 0 1")
+    assert search.static_exchange(board, chess.Move.from_uci("c4d5")) == 3
+
+
+def test_see_sees_the_rook_behind_the_rook() -> None:
+    # Doubled rooks: the front rook takes the knight, the pawn takes it, the back
+    # rook takes the pawn through the vacated square: 3 - 5 + 1 = -1.
+    board = chess.Board("4k3/8/4p3/3n4/8/8/3R4/3RK3 w - - 0 1")
+    assert search.static_exchange(board, chess.Move.from_uci("d2d5")) == 3 - 5 + 1
+
+
+def test_see_handles_en_passant() -> None:
+    board = chess.Board("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1")
+    assert search.static_exchange(board, chess.Move.from_uci("e5d6")) == 1
+
+
+def test_losing_captures_are_ordered_after_killers() -> None:
+    searcher = make_searcher()
+    board = chess.Board("4k3/8/4p3/3p4/8/8/8/3RK3 w - - 0 1")
+    killer = chess.Move.from_uci("e1e2")
+    searcher.killers[0] = [killer]
+    moves = searcher.ordered_moves(board, 0, None)
+    assert moves.index(killer) < moves.index(chess.Move.from_uci("d1d5"))

@@ -66,6 +66,7 @@ PIECE_VALUE: Final = {
 TT_MOVE_BONUS: Final = 1_000_000
 CAPTURE_BONUS: Final = 500_000
 KILLER_BONUS: Final = 400_000
+LOSING_CAPTURE_BONUS: Final = 300_000  # captures SEE calls losing: after killers
 KILLERS_PER_PLY: Final = 2
 
 # Null-move pruning: if passing the turn still fails high, the position is good enough
@@ -175,6 +176,58 @@ def delta_pruned(static: int, victim: chess.PieceType, alpha: int) -> bool:
     return static + PIECE_CP[victim] * SCORE_PER_CP + DELTA_MARGIN < alpha
 
 
+def _least_valuable_attacker(
+    board: chess.Board, attackers: chess.Bitboard, color: chess.Color
+) -> tuple[chess.Bitboard, chess.PieceType] | None:
+    order = (chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN, chess.KING)
+    for piece_type in order:
+        candidates = attackers & board.pieces_mask(piece_type, color)
+        if candidates:
+            return candidates & -candidates, piece_type  # lowest set bit
+    return None
+
+
+def static_exchange(board: chess.Board, move: chess.Move) -> int:
+    """Material won by `move` after every sensible recapture, in pawn units.
+
+    The classic swap list: each side captures with its least valuable attacker in
+    turn, sliders behind the capturer join in as it leaves the line, and each side
+    may stop when continuing would lose material. The full list is walked and folded
+    from the end; the usual early-exit shortcut is left out because it returns the
+    wrong value when a piece behind the capturer joins in.
+    """
+    square = move.to_square
+    victim = board.piece_type_at(square)
+    if victim is None and board.is_en_passant(move):
+        victim = chess.PAWN
+    attacker = board.piece_type_at(move.from_square)
+    if attacker is None:
+        raise ValueError(f"no piece on {chess.square_name(move.from_square)}")
+
+    gain = [PIECE_VALUE[victim] if victim is not None else 0]
+    occupied = board.occupied & ~chess.BB_SQUARES[move.from_square]
+    if board.is_en_passant(move):
+        captured_square = square + (-8 if board.turn == chess.WHITE else 8)
+        occupied &= ~chess.BB_SQUARES[captured_square]
+    side = not board.turn
+    piece = attacker
+    while True:
+        # Speculative: what the next capturer nets if it takes and is taken back.
+        gain.append(PIECE_VALUE[piece] - gain[-1])
+        attackers = board.attackers_mask(side, square, occupied) & occupied
+        next_attacker = _least_valuable_attacker(board, attackers, side)
+        if next_attacker is None:
+            break
+        attacker_bb, piece = next_attacker
+        occupied &= ~attacker_bb
+        side = not side
+    gain.pop()  # the last entry assumed a recapture that never came
+    while len(gain) > 1:
+        last = gain.pop()
+        gain[-1] = -max(-gain[-1], last)  # each side may stop instead of continuing
+    return gain[0]
+
+
 class Searcher:
     """Alpha-beta search state for one game.
 
@@ -234,6 +287,8 @@ class Searcher:
         if tt_move is not None and move == tt_move:
             return TT_MOVE_BONUS
         if board.is_capture(move) or move.promotion is not None:
+            if move.promotion is None and static_exchange(board, move) < 0:
+                return LOSING_CAPTURE_BONUS + self._capture_score(board, move)
             return CAPTURE_BONUS + self._capture_score(board, move)
         if move in self.killers[ply]:
             return KILLER_BONUS
@@ -520,7 +575,7 @@ class Searcher:
         for move in moves:
             if static is not None and move.promotion is None:
                 victim = board.piece_type_at(move.to_square) or chess.PAWN
-                if delta_pruned(static, victim, alpha):
+                if delta_pruned(static, victim, alpha) or static_exchange(board, move) < 0:
                     continue
             self.engine.push(move)
             try:
