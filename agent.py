@@ -402,13 +402,17 @@ class Engine:
             if not moves and board.is_stalemate():
                 return 0
         for move in self._ordered_moves(board, moves, None, ply):
-            if not in_check and not move.promotion and not board.gives_check(move):
+            if not in_check and not move.promotion:
                 captured_value = self._captured_value(board, move)
-                if stand_pat + captured_value + 180 < alpha:
-                    self.stats.delta_prunes += 1
-                    continue
-                if qply >= 2 and static_exchange(board, move) < -120:
-                    self.stats.see_prunes += 1
+                loses_to_delta = stand_pat + captured_value + 180 < alpha
+                loses_to_see = (
+                    not loses_to_delta and qply >= 2 and static_exchange(board, move) < -120
+                )
+                if (loses_to_delta or loses_to_see) and not board.gives_check(move):
+                    if loses_to_delta:
+                        self.stats.delta_prunes += 1
+                    else:
+                        self.stats.see_prunes += 1
                     continue
             board.push(move)
             try:
@@ -499,14 +503,15 @@ class Engine:
         best_move: chess.Move | None = None
         for index, move in enumerate(moves):
             quiet = not board.is_capture(move) and move.promotion is None
-            gives_check = board.gives_check(move)
+            lmr_candidate = depth >= 3 and index >= 4 and quiet and not in_check
+            gives_check = board.gives_check(move) if lmr_candidate else False
             board.push(move)
             try:
                 if index == 0:
                     score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1, True)
                 else:
                     reduction = 0
-                    if depth >= 3 and index >= 4 and quiet and not in_check and not gives_check:
+                    if lmr_candidate and not gives_check:
                         reduction = 1 + int(depth >= 6 and index >= 8)
                         self.stats.lmr_reductions += 1
                     score = -self._negamax(

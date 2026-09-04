@@ -293,3 +293,13 @@ be measured should not displace work that can.
   later crossed a low-clock depth threshold: at 1--2.5 seconds the engine selected `e4f5` at depth 1,
   while a slightly larger emergency allocation completed depth 2 and selected `f4e5`. The revised
   policy scored `+8 =4 -8` against the previous policy over 20 reversed-color games with no flags.
+- The first fixed five-level Stockfish 18 ladder (five real-position pairs per level, 3+0.1, 100 ms
+  teacher moves) scored: 85% at 1320, 40% at 1500, 40% at 1700, 30% at 1900, and 25% at 2000.
+  These ten-game levels have wide uncertainty, but the 2000 score is about -191 unanchored Elo and
+  establishes the gap. On two real-position pairs apiece, the engine scored 4-0 against every
+  bundled baseline: random, greedy, minimax, Numba, and approximate-1000.
+- Profiling showed eager `gives_check()` calls consumed roughly 14% of search time. Restricting
+  them to actual LMR candidates and otherwise-prunable quiescence moves increased throughput from
+  21,132 to 23,187 nodes/s (9.7%) without changing search semantics. The optimized build scored
+  `+9 =5 -6` against its checkpoint over 20 real-position games (+52.5 unanchored Elo), with no
+  failures.

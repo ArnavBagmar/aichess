@@ -8,3 +8,4 @@ submission.zip
 data/*.jsonl
 data/*.jsonl.manifest.json
 data/raw/
+local-opponents/
