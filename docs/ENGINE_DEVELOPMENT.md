@@ -306,3 +306,10 @@ be measured should not displace work that can.
 - On the identical five-pair Stockfish 2000 target suite, that promoted build improved from 25% to
   40% (`+4 =0 -6`), reducing the unanchored gap from about -191 to -70 Elo. The sample is too small
   to claim a rating, so 40% is the next checkpoint to beat with a larger confirmation run.
+- The larger Stockfish 2000 confirmation used 50 distinct realistic positions, reversed colors,
+  and the same 3+0.1 control with 100 ms teacher moves. It scored `+30 =25 -45` over 100 games
+  (42.5%, -52.5 unanchored Elo) with no agent or opponent failures. Its pentanomial counts were
+  `[10, 8, 20, 11, 1]` from 0 through 2 points per pair. A normal pair-aware approximation gives a
+  95% score interval of roughly 34.9%--50.1%, or about -108 to +1 Elo. This is evidence of a much
+  smaller gap than the first ladder suggested, but it does not establish a 2000 rating; the next
+  gains must come from diagnosed failures rather than interpreting match noise.

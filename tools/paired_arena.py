@@ -29,6 +29,21 @@ def failed_side(outcome: Outcome) -> str | None:
     return "both"
 
 
+def score_interval(pair_scores: list[float], z: float = 1.96) -> tuple[float, float]:
+    """Return a normal, pair-aware confidence interval for per-game score."""
+    if len(pair_scores) < 2:
+        return (0.0, 1.0)
+    mean_pair_score = statistics.fmean(pair_scores)
+    standard_error = statistics.stdev(pair_scores) / math.sqrt(len(pair_scores)) / 2
+    game_score = mean_pair_score / 2
+    return (max(0.0, game_score - z * standard_error), min(1.0, game_score + z * standard_error))
+
+
+def score_to_elo(score: float) -> float:
+    """Convert a non-terminal game score to an unanchored Elo difference."""
+    return -400 * math.log10(1 / score - 1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agent", type=Path, default=Path("."))
@@ -59,6 +74,7 @@ def main() -> None:
         raise SystemExit("no starting positions selected")
     pentanomial = [0, 0, 0, 0, 0]
     game_scores: list[float] = []
+    pair_scores: list[float] = []
     agent_failures: dict[str, int] = {}
     opponent_failures: dict[str, int] = {}
 
@@ -94,18 +110,24 @@ def main() -> None:
                 filename = f"{pair_index:02}-{position.name}-{game_in_pair}.pgn"
                 (arguments.pgn_dir / filename).write_text(outcome.pgn + "\n", encoding="utf-8")
         pentanomial[round(pair_score * 2)] += 1
+        pair_scores.append(pair_score)
 
     score = statistics.fmean(game_scores)
     wins = sum(value == 1 for value in game_scores)
     draws = sum(value == 0.5 for value in game_scores)
     losses = sum(value == 0 for value in game_scores)
     if 0 < score < 1:
-        elo = -400 * math.log10(1 / score - 1)
+        elo = score_to_elo(score)
         elo_text = f"{elo:+.1f} unanchored Elo"
     else:
         elo_text = "Elo undefined at a 0% or 100% sample score"
     print(f"\n+{wins} ={draws} -{losses}, score {score:.1%}, {elo_text}")
     print(f"pentanomial [LL, LD, DD/WL, WD, WW]: {pentanomial}")
+    lower, upper = score_interval(pair_scores)
+    interval_text = f"{lower:.1%}--{upper:.1%}"
+    if 0 < lower < upper < 1:
+        interval_text += f" ({score_to_elo(lower):+.1f}--{score_to_elo(upper):+.1f} Elo)"
+    print(f"approximate pair-aware 95% interval: {interval_text}")
     print(f"agent failures: {agent_failures or 'none'}")
     print(f"opponent failures: {opponent_failures or 'none'}")
 
