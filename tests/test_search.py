@@ -353,3 +353,16 @@ def test_is_draw_accepts_a_precomputed_key() -> None:
     board = chess.Board()
     searcher.note_root_position(board)
     assert searcher.is_draw(board, 1, board._transposition_key())
+
+
+def test_delta_pruning_skips_captures_that_cannot_reach_alpha() -> None:
+    pawn = search.PIECE_CP[chess.PAWN] * 32
+    queen = search.PIECE_CP[chess.QUEEN] * 32
+    alpha = 1000 * 32
+    assert search.delta_pruned(static=0, victim=chess.PAWN, alpha=alpha)
+    assert not search.delta_pruned(static=0, victim=chess.QUEEN, alpha=alpha)
+    # Exactly on the margin is kept: the margin is the benefit of the doubt.
+    on_margin = alpha - pawn - search.DELTA_MARGIN
+    assert not search.delta_pruned(static=on_margin, victim=chess.PAWN, alpha=alpha)
+    just_under = alpha - queen - search.DELTA_MARGIN - 1
+    assert search.delta_pruned(static=just_under, victim=chess.QUEEN, alpha=alpha)

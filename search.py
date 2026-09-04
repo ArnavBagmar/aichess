@@ -90,6 +90,18 @@ ASPIRATION_WINDOW: Final = 50 * SCORE_PER_CP
 RFP_MAX_DEPTH: Final = 3
 RFP_MARGIN: Final = 120 * SCORE_PER_CP
 
+# Delta pruning: in quiescence, a capture that could not lift the static evaluation
+# to alpha even with this margin on top is not worth searching.
+PIECE_CP: Final = {
+    chess.PAWN: 100,
+    chess.KNIGHT: 300,
+    chess.BISHOP: 300,
+    chess.ROOK: 500,
+    chess.QUEEN: 900,
+    chess.KING: 0,
+}
+DELTA_MARGIN: Final = 200 * SCORE_PER_CP
+
 # Transposition bound kinds.
 EXACT: Final = 0
 LOWER: Final = 1
@@ -156,6 +168,11 @@ def reverse_futility_cutoff(static: int, depth: int, beta: int, in_check: bool) 
         and beta < MATE_THRESHOLD
         and static - RFP_MARGIN * depth >= beta
     )
+
+
+def delta_pruned(static: int, victim: chess.PieceType, alpha: int) -> bool:
+    """Whether capturing `victim` is hopeless for raising the score to alpha."""
+    return static + PIECE_CP[victim] * SCORE_PER_CP + DELTA_MARGIN < alpha
 
 
 class Searcher:
@@ -480,6 +497,7 @@ class Searcher:
         self._check_clock()
         board = self.engine.board
         in_check = board.is_check()
+        static: int | None
 
         if in_check:
             # No stand-pat while in check: the position may be a forced mate.
@@ -487,17 +505,23 @@ class Searcher:
             if not moves:
                 return -MATE + ply
             best_score = -2 * MATE
+            static = None
         else:
             best_score = self.engine.evaluate()
             if best_score >= beta:
                 return best_score
             alpha = max(alpha, best_score)
             moves = self.ordered_captures(board)
+            static = best_score
 
         if ply >= MAX_PLY_LIMIT:
             return self.engine.evaluate()
 
         for move in moves:
+            if static is not None and move.promotion is None:
+                victim = board.piece_type_at(move.to_square) or chess.PAWN
+                if delta_pruned(static, victim, alpha):
+                    continue
             self.engine.push(move)
             try:
                 score = -self._quiescence(ply + 1, -beta, -alpha)
