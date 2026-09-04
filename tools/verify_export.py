@@ -57,8 +57,8 @@ def trainer_forward(model: torch.nn.Module, board: chess.Board) -> float:
 
 
 def build_model(trainer_dir: Path, checkpoint: Path) -> torch.nn.Module:
-    import model as trainer_model  # noqa: PLC0415
-    from model import quantize  # noqa: PLC0415
+    import model as trainer_model
+    from model import quantize
 
     quantize.FAKE_QUANTIZE_EPS = 0.0  # exact integer emulation, not the training epsilon
 

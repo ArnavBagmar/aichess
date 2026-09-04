@@ -19,13 +19,14 @@ Usage: python tools/export_net.py path/to/last.ckpt [--out weights/nnue.npz]
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nnue_arch import (  # noqa: E402
+from nnue_arch import (
     L1,
     L2,
     L3,
@@ -36,8 +37,8 @@ from nnue_arch import (  # noqa: E402
     NUM_PSQT_BUCKETS,
     OUT_IN,
 )
-from nnue_net import NetworkWeights, load_network  # noqa: E402
-from tools.gen_random_net import save_network  # noqa: E402
+from nnue_net import NetworkWeights, load_network
+from tools.gen_random_net import save_network
 
 FT_COLS = L1 + NUM_PSQT_BUCKETS
 
@@ -54,7 +55,7 @@ def _find(state: dict[str, torch.Tensor], suffix: str, shape: tuple[int, ...]) -
 
 
 def _quantize(
-    values: torch.Tensor, scale: int, dtype: type[np.generic], label: str
+    values: torch.Tensor, scale: int, dtype: type[np.integer[Any]], label: str
 ) -> np.ndarray:
     scaled = torch.round(values * scale)
     info = np.iinfo(dtype)
@@ -65,7 +66,7 @@ def _quantize(
             f"{label}: {outside} values outside [{low:.0f}, {high:.0f}] after scaling by "
             f"{scale}; the checkpoint does not fit the quantization scheme"
         )
-    return scaled.numpy().astype(dtype)
+    return np.asarray(scaled.numpy().astype(dtype))
 
 
 def export(checkpoint_path: Path) -> NetworkWeights:

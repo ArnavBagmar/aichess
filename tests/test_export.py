@@ -10,13 +10,17 @@ wrong scale, or a bad reshape. It does not exercise the trainer's forward code
 """
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 
-torch = pytest.importorskip("torch")
+if TYPE_CHECKING:
+    import torch
+else:
+    torch = pytest.importorskip("torch")
 
-from nnue_arch import (  # noqa: E402
+from nnue_arch import (
     L1,
     L2,
     L3,
@@ -27,8 +31,10 @@ from nnue_arch import (  # noqa: E402
     NUM_PSQT_BUCKETS,
     OUT_IN,
 )
+from nnue_net import NetworkWeights
 
 FT_COLS = L1 + NUM_PSQT_BUCKETS
+Exported = tuple[NetworkWeights, dict[str, np.ndarray]]
 
 
 def _synthetic_state_dict(seed: int) -> dict[str, "torch.Tensor"]:
@@ -55,8 +61,8 @@ def _synthetic_state_dict(seed: int) -> dict[str, "torch.Tensor"]:
 
 
 @pytest.fixture(scope="module")
-def exported(tmp_path_factory: pytest.TempPathFactory) -> tuple[object, dict[str, np.ndarray]]:
-    from tools.export_net import export  # noqa: PLC0415
+def exported(tmp_path_factory: pytest.TempPathFactory) -> Exported:
+    from tools.export_net import export
 
     state = _synthetic_state_dict(3)
     ckpt = tmp_path_factory.mktemp("ckpt") / "net.ckpt"
@@ -69,7 +75,7 @@ def _close(actual: np.ndarray, expected: np.ndarray, scale: float, label: str) -
     assert np.abs(actual - expected).max() <= 1.0 / scale + 1e-9, label
 
 
-def test_feature_transformer_merges_virtual(exported: tuple) -> None:
+def test_feature_transformer_merges_virtual(exported: Exported) -> None:
     net, state = exported
     merged = state["model.input.features.0.weight"] + np.tile(
         state["model.input.features.0.virtual_weight"], (NUM_KING_BUCKETS, 1)
@@ -79,7 +85,7 @@ def test_feature_transformer_merges_virtual(exported: tuple) -> None:
     _close(net.ft_b.astype(np.float64) / 256.0, state["model.input.bias"][:L1], 256.0, "ft_b")
 
 
-def test_l1_merges_factorization(exported: tuple) -> None:
+def test_l1_merges_factorization(exported: Exported) -> None:
     net, state = exported
     merged = state["model.layer_stacks.l1.linear.weight"] + np.tile(
         state["model.layer_stacks.l1.factorized_linear.weight"], (NUM_LS_BUCKETS, 1)
@@ -88,7 +94,7 @@ def test_l1_merges_factorization(exported: tuple) -> None:
     _close(net.l1_w.astype(np.float64) / 128.0, expected, 128.0, "l1_w")
 
 
-def test_l2_and_output_shapes_and_scales(exported: tuple) -> None:
+def test_l2_and_output_shapes_and_scales(exported: Exported) -> None:
     net, state = exported
     l2 = state["model.layer_stacks.l2.linear.weight"].reshape(NUM_LS_BUCKETS, L3, 2 * L2)
     _close(net.l2_w.astype(np.float64) / 64.0, l2, 64.0, "l2_w")
@@ -97,10 +103,10 @@ def test_l2_and_output_shapes_and_scales(exported: tuple) -> None:
     assert net.out_b.shape == (NUM_LS_BUCKETS,)
 
 
-def test_exported_net_loads_and_evaluates(exported: tuple) -> None:
-    import chess  # noqa: PLC0415
+def test_exported_net_loads_and_evaluates(exported: Exported) -> None:
+    import chess
 
-    from nnue_engine import Engine  # noqa: PLC0415
+    from nnue_engine import Engine
 
     net, _ = exported
     engine = Engine(net)
