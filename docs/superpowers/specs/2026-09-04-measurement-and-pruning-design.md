@@ -261,3 +261,18 @@ stage reached: 14.7 vs 14.6 knps. Move ordering overhead is not where the time g
 python-chess push/pop and the accumulator update are, as the phase 4 profile said. Only
 the one-key-per-node change was kept. The speed lever remains a bitboard movegen, which
 is its own spec.
+
+### Self-play sanity, Task 4
+
+HEAD against itself (commit b407f41 in both seats), 100 games at 10 s + 0.5 s, 3 workers,
+sharing the CPU with GPU training:
+
+```
+100 games: +30 =33 -37, score 46.5%
+rating difference: -24 Elo (1 SE: -53 to +4)
+SPRT [0, 20]: undecided, LLR -0.84 in [-2.94, 2.94]
+```
+
+No bound crossed and the score sits inside 40-60%, so the harness has no bias large
+enough to decide a gate on its own. The 3.5-point lean toward the second seat is within
+one standard error.
