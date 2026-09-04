@@ -11,6 +11,7 @@ from typing import Final
 
 import chess
 
+from nnue_arch import SCORE_PER_CP
 from nnue_engine import Engine
 
 # Score conventions. A mate at distance `ply` scores MATE - ply, so shorter mates win
@@ -79,6 +80,11 @@ LMR_MIN_MOVES: Final = 4
 LMR_LATE_MOVES: Final = 8
 LMR_DEEP: Final = 6
 
+# Aspiration windows. From ASPIRATION_MIN_DEPTH on, the root searches a narrow window
+# around the previous iteration's score; a fail outside it widens that side and retries.
+ASPIRATION_MIN_DEPTH: Final = 5
+ASPIRATION_WINDOW: Final = 50 * SCORE_PER_CP
+
 # Transposition bound kinds.
 EXACT: Final = 0
 LOWER: Final = 1
@@ -108,6 +114,23 @@ def from_tt_score(score: int, ply: int) -> int:
     if score <= -MATE_THRESHOLD:
         return score + ply
     return score
+
+
+def aspiration_window(score: int, depth: int) -> tuple[int, int, int]:
+    """(alpha, beta, window) to open iteration `depth` with, given the last score."""
+    if depth < ASPIRATION_MIN_DEPTH:
+        return -2 * MATE, 2 * MATE, 2 * MATE
+    return score - ASPIRATION_WINDOW, score + ASPIRATION_WINDOW, ASPIRATION_WINDOW
+
+
+def widen(alpha: int, beta: int, score: int, window: int) -> tuple[int, int, int]:
+    """Open the side the search failed on, doubling the window, up to the full range."""
+    window *= 2
+    if score <= alpha:
+        alpha = max(score - window, -2 * MATE)
+    else:
+        beta = min(score + window, 2 * MATE)
+    return alpha, beta, window
 
 
 class Searcher:
@@ -218,9 +241,20 @@ class Searcher:
         self._path.clear()
 
         best = moves[0]
+        score = 0
         for depth in range(1, MAX_DEPTH):
+            alpha, beta, window = aspiration_window(score, depth)
             try:
-                score, move = self._search_root(depth, best)
+                while True:
+                    score, move = self._search_root(depth, best, alpha, beta)
+                    if alpha < score < beta or (alpha == -2 * MATE and beta == 2 * MATE):
+                        break
+                    if score >= beta and move is not None:
+                        # A fail-high names a move that beat the window: the best lead
+                        # we have if the clock cuts the re-search short. A fail-low
+                        # names nothing: null-window scores are not comparable.
+                        best = move
+                    alpha, beta, window = widen(alpha, beta, score, window)
             except SearchAborted:
                 break  # discard this depth entirely; it has a biased best move
             if move is not None:

@@ -1141,8 +1141,11 @@ Replace the iterative-deepening loop in `pick`:
                     score, move = self._search_root(depth, best, alpha, beta)
                     if alpha < score < beta or (alpha == -2 * MATE and beta == 2 * MATE):
                         break
-                    if move is not None:
-                        best = move  # the move that failed high is the best lead we have
+                    if score >= beta and move is not None:
+                        # A fail-high names a move that beat the window: the best lead
+                        # we have if the clock cuts the re-search short. A fail-low
+                        # names nothing: null-window scores are not comparable.
+                        best = move
                     alpha, beta, window = widen(alpha, beta, score, window)
             except SearchAborted:
                 break  # discard this depth entirely; it has a biased best move

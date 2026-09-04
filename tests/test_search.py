@@ -283,3 +283,41 @@ def test_pvs_recovers_a_better_move_after_a_quiet_first_move() -> None:
     score, move = fixed_depth(searcher, fen, 3, previous_best=quiet_first)
     assert move == chess.Move.from_uci("d1d8")
     assert score > 500 * 32  # a free queen, in 1/32 cp
+
+
+def test_aspiration_window_is_fully_open_at_shallow_depth() -> None:
+    alpha, beta, _ = search.aspiration_window(100, search.ASPIRATION_MIN_DEPTH - 1)
+    assert (alpha, beta) == (-2 * search.MATE, 2 * search.MATE)
+
+
+def test_aspiration_window_brackets_the_previous_score() -> None:
+    alpha, beta, window = search.aspiration_window(100, search.ASPIRATION_MIN_DEPTH)
+    assert alpha < 100 < beta
+    assert beta - alpha == 2 * window == 2 * search.ASPIRATION_WINDOW
+
+
+def test_widen_opens_only_the_failed_side_and_doubles_the_window() -> None:
+    alpha, beta, window = search.widen(-1600, 1600, score=-1700, window=1600)
+    assert window == 3200
+    assert alpha == -1700 - 3200
+    assert beta == 1600
+    alpha, beta, window = search.widen(alpha, beta, score=1601, window=window)
+    assert window == 6400
+    assert beta == 1601 + 6400
+    assert alpha == -1700 - 3200
+
+
+def test_widening_reaches_the_full_window_and_stops() -> None:
+    alpha, beta, window = -1600, 1600, 1600
+    for _ in range(40):
+        alpha, beta, window = search.widen(alpha, beta, score=alpha, window=window)
+    assert alpha == -2 * search.MATE
+    assert beta == 1600
+
+
+def test_root_search_fails_high_outside_a_narrow_window() -> None:
+    searcher = make_searcher()
+    narrow = 100 * 32
+    fen = "3q3k/8/8/8/8/8/8/3RK3 w - - 0 1"
+    score, _ = fixed_depth(searcher, fen, 3, alpha=-narrow, beta=narrow)
+    assert score >= narrow
