@@ -321,3 +321,10 @@ def test_root_search_fails_high_outside_a_narrow_window() -> None:
     fen = "3q3k/8/8/8/8/8/8/3RK3 w - - 0 1"
     score, _ = fixed_depth(searcher, fen, 3, alpha=-narrow, beta=narrow)
     assert score >= narrow
+
+
+def test_a_checking_move_is_searched_one_ply_deeper() -> None:
+    assert search.child_depth(4, reduction=0, gives_check=True) == 4
+    assert search.child_depth(4, reduction=0, gives_check=False) == 3
+    # A reduced move never gives check (LMR skips them), so the two never combine.
+    assert search.child_depth(4, reduction=1, gives_check=False) == 2

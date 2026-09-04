@@ -133,6 +133,16 @@ def widen(alpha: int, beta: int, score: int, window: int) -> tuple[int, int, int
     return alpha, beta, window
 
 
+def child_depth(depth: int, reduction: int, gives_check: bool) -> int:
+    """Remaining depth for a child: one less, less any reduction, plus one for a check.
+
+    Checks are forcing, so a line of them is cheap to follow and expensive to cut
+    short: the horizon lands mid-combination and the evaluation sees a lost king
+    hunt as a material lead.
+    """
+    return depth - 1 - reduction + (1 if gives_check else 0)
+
+
 class Searcher:
     """Alpha-beta search state for one game.
 
@@ -370,16 +380,24 @@ class Searcher:
                 tactical = board.is_capture(move) or move.promotion is not None
                 self.engine.push(move)
                 try:
+                    gives_check = self.engine.board.is_check()
                     reduction = 0
                     if (
                         depth >= LMR_MIN_DEPTH
                         and index >= LMR_MIN_MOVES
                         and not tactical
                         and not in_check
-                        and not self.engine.board.is_check()
+                        and not gives_check
                     ):
                         reduction = self._late_move_reduction(depth, index)
-                    score = self._pvs_child(index, depth - 1, ply + 1, alpha, beta, reduction)
+                    score = self._pvs_child(
+                        index,
+                        child_depth(depth, 0, gives_check),
+                        ply + 1,
+                        alpha,
+                        beta,
+                        reduction,
+                    )
                 finally:
                     self.engine.pop()
                 if score > best_score:
