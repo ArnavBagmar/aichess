@@ -276,3 +276,19 @@ SPRT [0, 20]: undecided, LLR -0.84 in [-2.94, 2.94]
 No bound crossed and the score sits inside 40-60%, so the harness has no bias large
 enough to decide a gate on its own. The 3.5-point lean toward the second seat is within
 one standard error.
+
+### Node ladder, Task 4
+
+Commit b407f41 (the search before any phase 5 change) against full-strength Stockfish
+at 4000 nodes per move, 20 games at 120 s + 0.5 s, 2 workers, CPU shared with training:
+
+```
+20 games vs Stockfish at 4000 nodes: +0 =1 -19
+score 2.5%
+rating difference: -636 Elo (1 SE: -6984 to -512)
+```
+
+No failures: every loss was over the board. This is the number the `UCI_Elo` ladder was
+hiding. Stockfish at 4k nodes is a few milliseconds of its search and still 600 Elo
+clear of a 22 knps Python engine at depth 5-7. The 4k rung is kept for comparability,
+and the close-out adds a 1k rung, where the score can actually move.
