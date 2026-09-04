@@ -55,3 +55,9 @@ The 5,000-position depth-10 pilot also was not promoted. Its residual reduced he
 (-29 unanchored Elo). This is evidence that teacher-score regression alone is not our objective.
 The next dataset/model iteration must emphasize quiet legal game positions and pairwise legal-move
 ranking, then clear the same paired-game gate.
+
+A subsequent real-game pilot sampled 2,000 balanced positions from a deterministic 5,000-position
+Lichess reservoir and labelled three Stockfish 18 depth-10 variations per root. The residual reduced
+held-out MAE from 172.2 to 166.1 centipawns (3.5%). That was below the promotion threshold, so its
+weights were deleted. The result supports richer interaction features or a compact nonlinear model
+rather than further scaling a piece-square-only residual.

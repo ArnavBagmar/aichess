@@ -128,9 +128,18 @@ def main() -> None:
     parser.add_argument("--hash-mb", type=int, default=64)
     parser.add_argument("--max-abs-score", type=int, default=1_000)
     parser.add_argument("--multipv", type=int, default=3)
+    parser.add_argument("--input-jsonl", type=Path)
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
+    input_records: list[dict[str, object]] = []
+    if args.input_jsonl:
+        input_records = [
+            json.loads(line)
+            for line in args.input_jsonl.read_text(encoding="utf-8").splitlines()
+        ]
+        rng.shuffle(input_records)
+    input_index = 0
     seen: set[str] = set()
     attempted = 0
     accepted = 0
@@ -141,7 +150,15 @@ def main() -> None:
         UciTeacher(args.stockfish.resolve(), args.hash_mb, args.multipv) as teacher,
     ):
         while accepted < args.positions:
-            board = random_position(rng, args.min_ply, args.max_ply)
+            source_record: dict[str, object] = {}
+            if input_records:
+                if input_index >= len(input_records):
+                    break
+                source_record = input_records[input_index]
+                input_index += 1
+                board = chess.Board(str(source_record["fen"]))
+            else:
+                board = random_position(rng, args.min_ply, args.max_ply)
             key = board.fen(en_passant="fen")
             if key in seen:
                 continue
@@ -156,6 +173,7 @@ def main() -> None:
                 "bestmove": bestmove,
                 "teacher_nodes": nodes,
                 "candidates": candidates,
+                "source": source_record,
             }
             line = json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n"
             destination.write(line)
@@ -175,6 +193,12 @@ def main() -> None:
         "teacher_calls": attempted,
         "max_abs_score": args.max_abs_score,
         "multipv": args.multipv,
+        "input": args.input_jsonl.name if args.input_jsonl else "synthetic-random-play",
+        "input_sha256": (
+            hashlib.sha256(args.input_jsonl.read_bytes()).hexdigest()
+            if args.input_jsonl
+            else None
+        ),
         "sha256": digest.hexdigest(),
     }
     args.output.with_suffix(args.output.suffix + ".manifest.json").write_text(

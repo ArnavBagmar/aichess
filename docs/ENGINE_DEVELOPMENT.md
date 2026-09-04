@@ -277,3 +277,14 @@ budget for evaluator weights or other frequently used data.
 
 Every change should connect to a test, benchmark, dataset version, or paired match. Ideas that cannot
 be measured should not displace work that can.
+
+## Measured implementation checkpoints
+
+- The exact Numba material/PST kernel measured 157,587 evaluations/s versus 30,710/s for the
+  Python loop, including bitboard encoding (5.13x).
+- Integrated whole-engine throughput increased from 16,122 to 21,026 nodes/s (30.4%) on the
+  ten-position corpus, with extra completed depth in tactical positions.
+- In 20 reversed-color games from real Lichess positions, the compiled evaluator scored
+  `+8 =6 -6` against the exact Python checkpoint (55%, +34.9 unanchored Elo), with no failures.
+- The realistic source sample came from the official CC0 Lichess January 2013 standard archive:
+  100,000 games scanned, both ratings at least 1800, 5,000 deterministic reservoir positions.

@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from typing import Final
 
 import chess
+import numpy as np
+from numba import njit
+from numpy.typing import NDArray
 
 INFINITY: Final = 32_000
 MATE: Final = 31_000
@@ -61,6 +64,11 @@ KING_MG: Final = tuple(
 KING_EG: Final = _table(28, -42)
 MG_TABLE: Final = ((), PAWN_MG, KNIGHT_MG, BISHOP_MG, ROOK_MG, QUEEN_MG, KING_MG)
 EG_TABLE: Final = ((), PAWN_EG, KNIGHT_EG, BISHOP_EG, ROOK_EG, QUEEN_EG, KING_EG)
+MG_VALUE_ARRAY: Final = np.asarray(MG_VALUE, dtype=np.int32)
+EG_VALUE_ARRAY: Final = np.asarray(EG_VALUE, dtype=np.int32)
+PHASE_WEIGHT_ARRAY: Final = np.asarray(PHASE_WEIGHT, dtype=np.int32)
+MG_TABLE_ARRAY: Final = np.asarray(MG_TABLE[1:], dtype=np.int32)
+EG_TABLE_ARRAY: Final = np.asarray(EG_TABLE[1:], dtype=np.int32)
 ADJACENT_FILES: Final = tuple(
     (chess.BB_FILES[file_index - 1] if file_index else 0)
     | (chess.BB_FILES[file_index + 1] if file_index < 7 else 0)
@@ -89,6 +97,35 @@ PASSED_MASKS: Final = tuple(
     for color in (chess.BLACK, chess.WHITE)
 )
 PASSED_BONUS: Final = (0, 8, 14, 24, 40, 65, 100, 0)
+
+
+@njit(cache=False)
+def _compiled_piece_score(bitboards: NDArray[np.uint64]) -> tuple[int, int, int]:
+    mg = 0
+    eg = 0
+    phase = 0
+    for color_index in range(2):
+        sign = -1 if color_index == 0 else 1
+        for piece_index in range(6):
+            pieces = bitboards[color_index * 6 + piece_index]
+            piece_type = piece_index + 1
+            for square in range(64):
+                if pieces & (np.uint64(1) << np.uint64(square)):
+                    index = square if color_index else square ^ 56
+                    mg += sign * (
+                        MG_VALUE_ARRAY[piece_type] + MG_TABLE_ARRAY[piece_index, index]
+                    )
+                    eg += sign * (
+                        EG_VALUE_ARRAY[piece_type] + EG_TABLE_ARRAY[piece_index, index]
+                    )
+                    phase += PHASE_WEIGHT_ARRAY[piece_type]
+    return mg, eg, phase
+
+
+def _encode_bitboards(board: chess.Board, destination: NDArray[np.uint64]) -> None:
+    for color_index, color in enumerate((chess.BLACK, chess.WHITE)):
+        for piece_index, piece_type in enumerate(range(chess.PAWN, chess.KING + 1)):
+            destination[color_index * 6 + piece_index] = board.pieces_mask(piece_type, color)
 
 
 class SearchTimeout(Exception):
@@ -204,16 +241,15 @@ def _pawn_structure(white_pawns: int, black_pawns: int) -> int:
     return score
 
 
-def evaluate(board: chess.Board, pawn_score: int | None = None) -> int:
+def evaluate(
+    board: chess.Board,
+    pawn_score: int | None = None,
+    bitboards: NDArray[np.uint64] | None = None,
+) -> int:
     """Tapered material, placement, pawn, bishop-pair, and rook-file evaluation."""
-    mg = eg = phase = 0
-    for square, piece in board.piece_map().items():
-        sign = 1 if piece.color == chess.WHITE else -1
-        index = square if piece.color == chess.WHITE else chess.square_mirror(square)
-        piece_type = piece.piece_type
-        mg += sign * (MG_VALUE[piece_type] + MG_TABLE[piece_type][index])
-        eg += sign * (EG_VALUE[piece_type] + EG_TABLE[piece_type][index])
-        phase += PHASE_WEIGHT[piece_type]
+    buffer = np.empty(12, dtype=np.uint64) if bitboards is None else bitboards
+    _encode_bitboards(board, buffer)
+    mg, eg, phase = _compiled_piece_score(buffer)
 
     phase = min(phase, MAX_PHASE)
     score = (mg * phase + eg * (MAX_PHASE - phase)) // MAX_PHASE
@@ -239,6 +275,7 @@ class Engine:
         self.tt: dict[object, TTEntry] = {}
         self.eval_cache: dict[object, int] = {}
         self.pawn_cache: dict[tuple[int, int], int] = {}
+        self.eval_bitboards = np.empty(12, dtype=np.uint64)
         self.history: dict[tuple[chess.Color, int, int], int] = {}
         self.killers: list[list[chess.Move | None]] = [[None, None] for _ in range(MAX_PLY)]
         self.nodes = 0
@@ -269,7 +306,7 @@ class Engine:
             self.pawn_cache[pawn_key] = pawn_score
         else:
             self.stats.pawn_hits += 1
-        score = evaluate(board, pawn_score)
+        score = evaluate(board, pawn_score, self.eval_bitboards)
         if len(self.eval_cache) >= EVAL_CAPACITY:
             self.eval_cache.clear()
         self.eval_cache[key] = score
@@ -602,3 +639,9 @@ def get_move(fen: str, time_left_ms: int) -> str:
     """Return one legal UCI move under the competition contract."""
     board = chess.Board(fen)
     return _ENGINE.choose(board, time_left_ms).uci()
+
+
+# Compile outside the clock during the platform's import allowance.
+_warmup_bitboards = np.empty(12, dtype=np.uint64)
+_encode_bitboards(chess.Board(), _warmup_bitboards)
+_compiled_piece_score(_warmup_bitboards)

@@ -7,3 +7,4 @@ submission.zip
 .bench-worktrees/
 data/*.jsonl
 data/*.jsonl.manifest.json
+data/raw/
