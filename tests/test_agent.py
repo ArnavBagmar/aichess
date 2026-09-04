@@ -3,6 +3,7 @@ import unittest
 
 import chess
 
+import agent
 from agent import MATE, Engine, evaluate, get_move, static_exchange
 from tools.benchmark import POSITIONS
 
@@ -80,6 +81,23 @@ class SearchTests(unittest.TestCase):
         self.assertGreaterEqual(engine.stats.completed_depth, 1)
         self.assertGreater(engine.stats.nodes, 0)
         self.assertGreater(engine.stats.elapsed_s, 0)
+
+    def test_pondering_stops_cleanly_before_the_next_move(self) -> None:
+        board = chess.Board()
+        first = chess.Move.from_uci(get_move(board.fen(), 1_000))
+        board.push(first)
+        board.push(next(iter(board.legal_moves)))
+
+        second = chess.Move.from_uci(get_move(board.fen(), 100))
+
+        self.assertIn(second, board.legal_moves)
+        agent._stop_pondering()
+        self.assertIsNone(agent._PONDER_THREAD)
+
+    def test_pondering_is_disabled_near_flagfall(self) -> None:
+        get_move(chess.Board().fen(), 100)
+
+        self.assertIsNone(agent._PONDER_THREAD)
 
     def test_benchmark_corpus_contains_legal_nonterminal_positions(self) -> None:
         phases = set()

@@ -320,3 +320,12 @@ be measured should not displace work that can.
   depth 2--3, while official-time play can cross that horizon. Four games are not a rating sample,
   but they demonstrate that fast-control Elo is not a reliable absolute estimate of official-time
   strength. Keep fast games for paired change detection and confirm major changes at 120+0.5.
+- Background pondering now uses the competition-permitted retained CPU core while the opponent is
+  thinking. It searches the position after our chosen move, then cancels and reuses the populated
+  transposition table when the next request arrives. Against the exact pre-ponder checkpoint it
+  scored `+28 =14 -18` over 60 games (58.3%, +58.5 unanchored Elo), with a pair-aware 95% interval
+  of 48.6%--68.1%. The first version flagged once, so it was not promoted unchanged: the final
+  version disables pondering below an estimated 750 ms reserve and has a cancellation lifecycle
+  regression test. That guarded version completed a deliberately harsh 20-game 1+0.1 stress match
+  with no failures and scored 55%. Pondering remains optional acceleration; exceptions are isolated
+  from move selection and the worker is always joined before the engine handles a real position.

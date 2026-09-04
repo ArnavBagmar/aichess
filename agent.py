@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass
 from typing import Final
@@ -21,6 +22,7 @@ TT_CAPACITY: Final = 180_000
 EVAL_CAPACITY: Final = 60_000
 PAWN_CACHE_CAPACITY: Final = 16_000
 TIME_CHECK_MASK: Final = 127
+MIN_PONDER_REMAINING_MS: Final = 750
 EXACT: Final = 0
 LOWER: Final = 1
 UPPER: Final = 2
@@ -282,9 +284,12 @@ class Engine:
         self.stats = SearchStats()
         self.deadline = 0.0
         self.age = 0
+        self.cancelled = False
 
     def _check_time(self) -> None:
-        if self.nodes & TIME_CHECK_MASK == 0 and time.perf_counter() >= self.deadline:
+        if self.nodes & TIME_CHECK_MASK == 0 and (
+            self.cancelled or time.perf_counter() >= self.deadline
+        ):
             raise SearchTimeout
 
     def _evaluate(self, board: chess.Board) -> int:
@@ -592,6 +597,7 @@ class Engine:
         return optimum, min(usable, max(optimum, optimum * 1.9))
 
     def choose(self, board: chess.Board, time_left_ms: int) -> chess.Move:
+        self.cancelled = False
         call_start = time.perf_counter()
         self.nodes = 0
         self.stats = SearchStats()
@@ -638,12 +644,39 @@ class Engine:
 
 
 _ENGINE = Engine()
+_PONDER_THREAD: threading.Thread | None = None
+
+
+def _stop_pondering() -> None:
+    global _PONDER_THREAD
+    if _PONDER_THREAD is None:
+        return
+    _ENGINE.cancelled = True
+    _PONDER_THREAD.join()
+    _PONDER_THREAD = None
+
+
+def _ponder(board: chess.Board) -> None:
+    """Search the opponent-to-move position and retain the resulting TT entries."""
+    try:
+        _ENGINE.choose(board, 3_600_000)
+    except Exception:
+        # Pondering is optional acceleration and must never endanger a legal reply.
+        return
 
 
 def get_move(fen: str, time_left_ms: int) -> str:
     """Return one legal UCI move under the competition contract."""
+    global _PONDER_THREAD
+    _stop_pondering()
     board = chess.Board(fen)
-    return _ENGINE.choose(board, time_left_ms).uci()
+    move = _ENGINE.choose(board, time_left_ms)
+    board.push(move)
+    estimated_remaining_ms = time_left_ms - round(_ENGINE.stats.elapsed_s * 1000)
+    if not board.is_game_over() and estimated_remaining_ms >= MIN_PONDER_REMAINING_MS:
+        _PONDER_THREAD = threading.Thread(target=_ponder, args=(board,), daemon=True)
+        _PONDER_THREAD.start()
+    return move.uci()
 
 
 # Compile outside the clock during the platform's import allowance.
