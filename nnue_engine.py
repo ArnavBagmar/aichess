@@ -213,6 +213,20 @@ class Engine:
                 )
         self._ply = ply
 
+    def push_null(self) -> None:
+        """Pass the turn. The pieces do not move, so the accumulators carry over as they
+        are; that is what makes null-move pruning nearly free. pop() undoes it normally.
+        """
+        if self._ply + 1 >= MAX_PLY:
+            raise OverflowError(f"accumulator stack exhausted at ply {self._ply}")
+        ply = self._ply + 1
+        self._white_acc[ply] = self._white_acc[ply - 1]
+        self._black_acc[ply] = self._black_acc[ply - 1]
+        self._white_psqt[ply] = self._white_psqt[ply - 1]
+        self._black_psqt[ply] = self._black_psqt[ply - 1]
+        self.board.push(chess.Move.null())
+        self._ply = ply
+
     def pop(self) -> None:
         if self._ply == 0:
             raise IndexError("pop with no pushed moves")

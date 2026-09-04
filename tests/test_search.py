@@ -176,3 +176,46 @@ def test_agent_falls_back_rather_than_raising_on_a_dead_clock() -> None:
     board = chess.Board()
     uci = agent.get_move(board.fen(), 0)
     assert chess.Move.from_uci(uci) in board.legal_moves
+
+
+def test_null_move_is_refused_without_major_material() -> None:
+    # King and pawns only: exactly where passing can be better than moving, so the
+    # zugzwang guard has to switch null-move pruning off.
+    searcher = make_searcher()
+    pawns_only = chess.Board("8/5p2/5k2/8/8/5K2/5P2/8 w - - 0 1")
+    assert not searcher._has_major_material(pawns_only)
+    with_rook = chess.Board("8/5p2/5k2/8/8/5K2/5P2/7R w - - 0 1")
+    assert searcher._has_major_material(with_rook)
+
+
+def test_keeps_the_win_in_a_pawn_endgame() -> None:
+    """The pawn endgame that null-move pruning would misjudge if the guard failed.
+
+    The assertion is that the win survives, not that one exact move is played: several
+    moves here win, and LMR legitimately trades picking the very fastest for depth
+    everywhere else. What would be a real defect is throwing the win away.
+    """
+    fen = "8/6P1/8/8/8/8/1k6/4K3 w - - 0 1"
+    searcher = make_searcher()
+    move = searcher.pick(fen, 5_000)
+    engine = searcher.engine
+    engine.set_position(fen)
+    assert move in engine.board.legal_moves
+    engine.push(move)
+    assert -engine.evaluate_cp() > 1_500  # still decisively winning for us
+
+
+def test_finds_mate_in_two_through_a_quiet_first_move() -> None:
+    # The key move is quiet, so LMR may reduce it; the re-search has to recover it.
+    fen = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
+    searcher = make_searcher()
+    move = searcher.pick(fen, 10_000)
+    board = chess.Board(fen)
+    board.push(move)
+    assert board.is_checkmate() or move == chess.Move.from_uci("a1a8")
+
+
+def test_reduction_grows_for_later_moves_at_depth() -> None:
+    searcher = make_searcher()
+    assert searcher._late_move_reduction(search.LMR_DEEP, search.LMR_LATE_MOVES) == 2
+    assert searcher._late_move_reduction(search.LMR_MIN_DEPTH, search.LMR_MIN_MOVES) == 1

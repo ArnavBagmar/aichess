@@ -62,6 +62,18 @@ CAPTURE_BONUS: Final = 500_000
 KILLER_BONUS: Final = 400_000
 KILLERS_PER_PLY: Final = 2
 
+# Null-move pruning: if passing the turn still fails high, the position is good enough
+# that searching it properly is wasted work.
+NULL_MIN_DEPTH: Final = 3
+NULL_REDUCTION: Final = 2
+
+# Late move reductions. Moves the ordering put late are searched shallower first, and
+# only re-searched at full depth if they beat alpha after all.
+LMR_MIN_DEPTH: Final = 3
+LMR_MIN_MOVES: Final = 4
+LMR_LATE_MOVES: Final = 8
+LMR_DEEP: Final = 6
+
 # Transposition bound kinds.
 EXACT: Final = 0
 LOWER: Final = 1
@@ -208,7 +220,9 @@ class Searcher:
         if self.nodes % CLOCK_CHECK_NODES == 0 and time.monotonic() > self._deadline:
             raise SearchAborted
 
-    def _negamax(self, depth: int, ply: int, alpha: int, beta: int) -> int:
+    def _negamax(
+        self, depth: int, ply: int, alpha: int, beta: int, allow_null: bool = True
+    ) -> int:
         self._check_clock()
         board = self.engine.board
         if self.is_draw(board, ply):
@@ -231,18 +245,54 @@ class Searcher:
             return self._quiescence(ply, alpha, beta)
 
         moves = self.ordered_moves(board, ply, tt_move)
+        in_check = board.is_check()
         if not moves:
-            return -MATE + ply if board.is_check() else 0
+            return -MATE + ply if in_check else 0
+
+        # Null move. Moves are generated first so a stalemate cannot be mistaken for a
+        # fail-high: passing is only meaningful when there was something to pass up.
+        if (
+            allow_null
+            and depth >= NULL_MIN_DEPTH
+            and not in_check
+            and beta < MATE - MAX_PLY_LIMIT
+            and self._has_major_material(board)
+        ):
+            self.engine.push_null()
+            try:
+                passed = -self._negamax(
+                    depth - 1 - NULL_REDUCTION, ply + 1, -beta, -beta + 1, allow_null=False
+                )
+            finally:
+                self.engine.pop()
+            if passed >= beta:
+                # Deliberately beta, not `passed`: a score borrowed from a position that
+                # skipped a turn is not trustworthy enough to store as the real value.
+                return beta
 
         original_alpha = alpha
         best_score = -2 * MATE
         best_move: chess.Move | None = None
         self._path.append(key)
         try:
-            for move in moves:
+            for index, move in enumerate(moves):
+                tactical = board.is_capture(move) or move.promotion is not None
                 self.engine.push(move)
                 try:
-                    score = -self._negamax(depth - 1, ply + 1, -beta, -alpha)
+                    reduction = 0
+                    if (
+                        depth >= LMR_MIN_DEPTH
+                        and index >= LMR_MIN_MOVES
+                        and not tactical
+                        and not in_check
+                        and not self.engine.board.is_check()
+                    ):
+                        reduction = self._late_move_reduction(depth, index)
+                    score = -self._negamax(depth - 1 - reduction, ply + 1, -beta, -alpha)
+                    if reduction and score > alpha:
+                        # The shallow search rates this move better than the ordering
+                        # assumed, so the reduction was wrong here: confirm at full depth.
+                        score = -self._negamax(depth - 1, ply + 1, -beta, -alpha)
                 finally:
                     self.engine.pop()
                 if score > best_score:
@@ -262,6 +312,23 @@ class Searcher:
             bound = EXACT
         self._store(key, depth, best_score, bound, best_move)
         return best_score
+
+    @staticmethod
+    def _has_major_material(board: chess.Board) -> bool:
+        """Whether the side to move has a piece other than pawns and the king.
+
+        Null-move pruning assumes passing is never better than moving, which is exactly
+        false in zugzwang — and zugzwang is overwhelmingly a king-and-pawn affair.
+        """
+        pieces = board.knights | board.bishops | board.rooks | board.queens
+        return bool(pieces & board.occupied_co[board.turn])
+
+    @staticmethod
+    def _late_move_reduction(depth: int, index: int) -> int:
+        """How much to shave off a late quiet move. Deeper and later means bolder."""
+        if index >= LMR_LATE_MOVES and depth >= LMR_DEEP:
+            return 2
+        return 1
 
     def _store(
         self, key: Hashable, depth: int, score: int, bound: int, move: chess.Move | None
