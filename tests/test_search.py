@@ -160,3 +160,19 @@ def test_no_legal_moves_raises() -> None:
     # Black is stalemated.
     with pytest.raises(ValueError):
         searcher.pick("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1", 1_000)
+
+
+def test_agent_returns_legal_uci() -> None:
+    import agent
+
+    board = chess.Board()
+    uci = agent.get_move(board.fen(), 5_000)
+    assert chess.Move.from_uci(uci) in board.legal_moves
+
+
+def test_agent_falls_back_rather_than_raising_on_a_dead_clock() -> None:
+    import agent
+
+    board = chess.Board()
+    uci = agent.get_move(board.fen(), 0)
+    assert chess.Move.from_uci(uci) in board.legal_moves
