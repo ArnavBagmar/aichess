@@ -288,3 +288,8 @@ be measured should not displace work that can.
   `+8 =6 -6` against the exact Python checkpoint (55%, +34.9 unanchored Elo), with no failures.
 - The realistic source sample came from the official CC0 Lichess January 2013 standard archive:
   100,000 games scanned, both ratings at least 1800, 5,000 deterministic reservoir positions.
+- Analysis of seven draws against Stockfish 1320 found six began worse for our agent; repetition,
+  stalemate, and fifty-move handling saved points rather than wasting wins. The sole favorable start
+  later crossed a low-clock depth threshold: at 1--2.5 seconds the engine selected `e4f5` at depth 1,
+  while a slightly larger emergency allocation completed depth 2 and selected `f4e5`. The revised
+  policy scored `+8 =4 -8` against the previous policy over 20 reversed-color games with no flags.

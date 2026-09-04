@@ -54,6 +54,13 @@ class SearchTests(unittest.TestCase):
         self.assertIn(move, board.legal_moves)
         self.assertLess(elapsed, 0.1)
 
+    def test_emergency_budget_keeps_a_hard_clock_reserve(self) -> None:
+        for clock_ms in (100, 500, 1_000, 2_500, 5_000, 120_000):
+            soft, hard = Engine._time_budget(clock_ms)
+            self.assertGreater(soft, 0)
+            self.assertGreaterEqual(hard, soft)
+            self.assertLess(hard, clock_ms / 1_000)
+
     def test_terminal_position_is_rejected(self) -> None:
         checkmate = "7k/6Q1/6K1/8/8/8/8/8 b - - 0 1"
         with self.assertRaises(ValueError):

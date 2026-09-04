@@ -582,8 +582,8 @@ class Engine:
         usable = max(0.001, remaining - reserve)
         # The 0.5-second increment is valuable at normal clocks but must be tapered in emergencies:
         # blindly spending most of an increment when only a second remains invites flag losses.
-        increment_share = min(0.35, usable * 0.08)
-        optimum = min(usable, max(0.004, usable / 28.0 + increment_share))
+        increment_share = min(0.35, usable * 0.12)
+        optimum = min(usable, max(0.004, usable / 22.0 + increment_share))
         return optimum, min(usable, max(optimum, optimum * 1.9))
 
     def choose(self, board: chess.Board, time_left_ms: int) -> chess.Move:
