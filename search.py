@@ -85,6 +85,11 @@ LMR_DEEP: Final = 6
 ASPIRATION_MIN_DEPTH: Final = 5
 ASPIRATION_WINDOW: Final = 50 * SCORE_PER_CP
 
+# Reverse futility pruning: near the leaves, a static evaluation comfortably above
+# beta is trusted without searching, since a few plies rarely overturn a big lead.
+RFP_MAX_DEPTH: Final = 3
+RFP_MARGIN: Final = 120 * SCORE_PER_CP
+
 # Transposition bound kinds.
 EXACT: Final = 0
 LOWER: Final = 1
@@ -141,6 +146,16 @@ def child_depth(depth: int, reduction: int, gives_check: bool) -> int:
     hunt as a material lead.
     """
     return depth - 1 - reduction + (1 if gives_check else 0)
+
+
+def reverse_futility_cutoff(static: int, depth: int, beta: int, in_check: bool) -> bool:
+    """Whether the static evaluation alone settles this node."""
+    return (
+        not in_check
+        and 0 < depth <= RFP_MAX_DEPTH
+        and beta < MATE_THRESHOLD
+        and static - RFP_MARGIN * depth >= beta
+    )
 
 
 class Searcher:
@@ -345,8 +360,13 @@ class Searcher:
         if depth <= 0 or ply >= MAX_PLY_LIMIT:
             return self._quiescence(ply, alpha, beta)
 
-        moves = self.ordered_moves(board, ply, tt_move)
         in_check = board.is_check()
+        if depth <= RFP_MAX_DEPTH and not in_check and beta < MATE_THRESHOLD:
+            static = self.engine.evaluate()
+            if reverse_futility_cutoff(static, depth, beta, in_check):
+                return static
+
+        moves = self.ordered_moves(board, ply, tt_move)
         if not moves:
             return -MATE + ply if in_check else 0
 

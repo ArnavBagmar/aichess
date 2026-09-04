@@ -328,3 +328,21 @@ def test_a_checking_move_is_searched_one_ply_deeper() -> None:
     assert search.child_depth(4, reduction=0, gives_check=False) == 3
     # A reduced move never gives check (LMR skips them), so the two never combine.
     assert search.child_depth(4, reduction=1, gives_check=False) == 2
+
+
+def test_reverse_futility_cuts_only_a_comfortable_lead_at_low_depth() -> None:
+    margin = search.RFP_MARGIN
+    assert search.reverse_futility_cutoff(static=margin + 1, depth=1, beta=0, in_check=False)
+    assert not search.reverse_futility_cutoff(static=margin - 1, depth=1, beta=0, in_check=False)
+    # The margin grows with depth: what cuts at depth 1 does not at depth 2.
+    assert not search.reverse_futility_cutoff(static=margin + 1, depth=2, beta=0, in_check=False)
+    assert search.reverse_futility_cutoff(static=2 * margin + 1, depth=2, beta=0, in_check=False)
+
+
+def test_reverse_futility_never_fires_in_check_deep_or_near_mate() -> None:
+    huge = 10_000 * 32
+    too_deep = search.RFP_MAX_DEPTH + 1
+    assert not search.reverse_futility_cutoff(huge, depth=1, beta=0, in_check=True)
+    assert not search.reverse_futility_cutoff(huge, depth=too_deep, beta=0, in_check=False)
+    mate = search.MATE_THRESHOLD
+    assert not search.reverse_futility_cutoff(huge, depth=1, beta=mate, in_check=False)
