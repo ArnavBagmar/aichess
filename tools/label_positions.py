@@ -129,6 +129,11 @@ def main() -> None:
     parser.add_argument("--max-abs-score", type=int, default=1_000)
     parser.add_argument("--multipv", type=int, default=3)
     parser.add_argument("--input-jsonl", type=Path)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="append to a valid partial output, skipping FENs already written",
+    )
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
@@ -143,10 +148,27 @@ def main() -> None:
     seen: set[str] = set()
     attempted = 0
     accepted = 0
+    resumed_positions = 0
     args.output.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
+    if args.resume and args.output.exists():
+        for line_number, line in enumerate(
+            args.output.read_text(encoding="utf-8").splitlines(keepends=True), 1
+        ):
+            try:
+                record = json.loads(line)
+                seen.add(str(record["fen"]))
+            except (json.JSONDecodeError, KeyError) as error:
+                raise SystemExit(
+                    f"cannot resume: invalid record at {args.output}:{line_number}"
+                ) from error
+            digest.update(line.encode())
+            accepted += 1
+        resumed_positions = accepted
+        print(f"resuming from {accepted} valid positions")
+    output_mode = "a" if args.resume else "w"
     with (
-        args.output.open("w", encoding="utf-8") as destination,
+        args.output.open(output_mode, encoding="utf-8") as destination,
         UciTeacher(args.stockfish.resolve(), args.hash_mb, args.multipv) as teacher,
     ):
         while accepted < args.positions:
@@ -190,6 +212,7 @@ def main() -> None:
         "seed": args.seed,
         "positions_examined": len(seen),
         "positions_accepted": accepted,
+        "resumed_positions": resumed_positions,
         "teacher_calls": attempted,
         "max_abs_score": args.max_abs_score,
         "multipv": args.multipv,

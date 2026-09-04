@@ -1,5 +1,17 @@
 # Learned evaluator workflow
 
+## HalfKP residual checkpoint (2026-09-04)
+
+A 30,002-position realistic corpus was labelled offline by Stockfish 18 at depth 8. The first
+HalfKP-32 network trained directly on teacher scores was rejected at 199.65 cp held-out MAE versus
+163.18 cp for the handcrafted evaluator. Training the same two-perspective network on the teacher
+minus handcrafted residual reached 144.98 cp, an 11.2% held-out improvement. This model is only a
+candidate: quantized inference cost and paired-game strength must pass before its weights ship.
+
+The corpus was recovered from an interrupted append-only run by retaining 30,002 valid unique JSON
+records and rejecting one malformed line plus 532 duplicates. Its repair manifest records hashes
+and counts. `tools/label_positions.py --resume` now makes future labeling runs checkpoint-safe.
+
 The learned evaluator is an optional, measured replacement layer—not a reason to weaken the
 working alpha-beta engine. Stockfish runs only offline as a teacher. Neither its executable nor its
 weights enter `submission.zip`.

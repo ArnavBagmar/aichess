@@ -6,9 +6,21 @@ import chess
 
 from tools.label_positions import random_position
 from tools.train_evaluator import FEATURES, features
+from tools.train_nnue import FEATURES as NNUE_FEATURES
+from tools.train_nnue import halfkp_indices
 
 
 class TrainingPipelineTests(unittest.TestCase):
+    def test_halfkp_features_are_bounded_and_perspective_sensitive(self) -> None:
+        board = chess.Board()
+        white = halfkp_indices(board, chess.WHITE)
+        black = halfkp_indices(board, chess.BLACK)
+
+        self.assertEqual(len(white), 30)
+        self.assertEqual(len(black), 30)
+        self.assertTrue(all(0 <= int(index) < NNUE_FEATURES for index in white))
+        self.assertFalse((white == black).all())
+
     def test_feature_indices_are_bounded_and_mirror_antisymmetric(self) -> None:
         board = chess.Board("r3k2r/pp2bppp/2n1pn2/2bp4/8/2N1PN2/PPQB1PPP/2RR2K1 w kq - 4 13")
         vector: defaultdict[int, float] = defaultdict(float)

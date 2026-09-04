@@ -1,0 +1,178 @@
+"""Train a compact two-perspective HalfKP value network with NumPy."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+from dataclasses import dataclass
+from pathlib import Path
+
+import chess
+import numpy as np
+from numpy.typing import NDArray
+
+from agent import evaluate
+
+PIECE_TYPES = 5
+FEATURES = 64 * 2 * PIECE_TYPES * 64
+SCORE_SCALE = 400.0
+
+
+@dataclass(frozen=True, slots=True)
+class Example:
+    us: NDArray[np.int32]
+    them: NDArray[np.int32]
+    target: float
+    baseline: float
+    validation: bool
+
+
+def halfkp_indices(board: chess.Board, perspective: chess.Color) -> NDArray[np.int32]:
+    king = board.king(perspective)
+    if king is None:
+        raise ValueError("HalfKP requires both kings")
+    oriented_king = king if perspective else chess.square_mirror(king)
+    indices: list[int] = []
+    for square, piece in board.piece_map().items():
+        if piece.piece_type == chess.KING:
+            continue
+        oriented_square = square if perspective else chess.square_mirror(square)
+        relation = 0 if piece.color == perspective else 1
+        piece_index = relation * PIECE_TYPES + piece.piece_type - 1
+        indices.append((oriented_king * 10 + piece_index) * 64 + oriented_square)
+    return np.asarray(indices, dtype=np.int32)
+
+
+def load_examples(path: Path) -> list[Example]:
+    examples: list[Example] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        record = json.loads(line)
+        board = chess.Board(record["fen"])
+        side = board.turn
+        digest = hashlib.blake2b(record["fen"].encode(), digest_size=2).digest()
+        validation = int.from_bytes(digest, "little") % 10 == 0
+        baseline = float(evaluate(board)) / SCORE_SCALE
+        examples.append(
+            Example(
+                halfkp_indices(board, side),
+                halfkp_indices(board, not side),
+                float(record["score_cp"]) / SCORE_SCALE - baseline,
+                baseline,
+                validation,
+            )
+        )
+    return examples
+
+
+def forward(
+    embedding: NDArray[np.float32],
+    hidden_bias: NDArray[np.float32],
+    output: NDArray[np.float32],
+    output_bias: np.float32,
+    example: Example,
+) -> tuple[float, NDArray[np.float32], NDArray[np.float32]]:
+    width = hidden_bias.shape[0]
+    us = np.clip(hidden_bias + embedding[example.us].sum(axis=0), 0.0, 1.0)
+    them = np.clip(hidden_bias + embedding[example.them].sum(axis=0), 0.0, 1.0)
+    prediction = float(us @ output[:width] + them @ output[width:] + output_bias)
+    return prediction, us, them
+
+
+def metrics(
+    embedding: NDArray[np.float32],
+    hidden_bias: NDArray[np.float32],
+    output: NDArray[np.float32],
+    output_bias: np.float32,
+    examples: list[Example],
+) -> tuple[float, float, float]:
+    errors: list[float] = []
+    baseline_errors: list[float] = []
+    for example in examples:
+        prediction, _, _ = forward(embedding, hidden_bias, output, output_bias, example)
+        errors.append((prediction - example.target) * SCORE_SCALE)
+        baseline_errors.append(-example.target * SCORE_SCALE)
+    mae = sum(abs(error) for error in errors) / len(errors)
+    rmse = math.sqrt(sum(error * error for error in errors) / len(errors))
+    baseline_mae = sum(abs(error) for error in baseline_errors) / len(baseline_errors)
+    return mae, rmse, baseline_mae
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("dataset", type=Path)
+    parser.add_argument("--output", type=Path, default=Path("weights/nnue.npz"))
+    parser.add_argument("--hidden", type=int, default=32)
+    parser.add_argument("--epochs", type=int, default=12)
+    parser.add_argument("--learning-rate", type=float, default=0.002)
+    parser.add_argument("--seed", type=int, default=20260904)
+    args = parser.parse_args()
+
+    examples = load_examples(args.dataset)
+    train = [example for example in examples if not example.validation]
+    validation = [example for example in examples if example.validation]
+    if not train or not validation:
+        raise SystemExit("dataset must produce non-empty train and validation splits")
+
+    rng = np.random.default_rng(args.seed)
+    embedding = rng.normal(0.0, 0.01, (FEATURES, args.hidden)).astype(np.float32)
+    hidden_bias = np.full(args.hidden, 0.1, dtype=np.float32)
+    output = rng.normal(0.0, 0.02, args.hidden * 2).astype(np.float32)
+    output_bias = np.float32(0.0)
+    best_mae = math.inf
+    best: (
+        tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32], np.float32]
+        | None
+    ) = None
+
+    order = np.arange(len(train))
+    for epoch in range(1, args.epochs + 1):
+        rng.shuffle(order)
+        rate = np.float32(args.learning_rate / math.sqrt(epoch))
+        for index in order:
+            example = train[int(index)]
+            prediction, us, them = forward(
+                embedding, hidden_bias, output, output_bias, example
+            )
+            error = np.float32(np.clip(prediction - example.target, -2.5, 2.5))
+            old_output = output.copy()
+            output[: args.hidden] -= rate * error * us
+            output[args.hidden :] -= rate * error * them
+            output_bias -= rate * error
+            us_gradient = error * old_output[: args.hidden]
+            them_gradient = error * old_output[args.hidden :]
+            us_active = (us > 0.0) & (us < 1.0)
+            them_active = (them > 0.0) & (them < 1.0)
+            embedding[example.us] -= rate * us_gradient * us_active
+            embedding[example.them] -= rate * them_gradient * them_active
+            hidden_bias -= rate * (us_gradient * us_active + them_gradient * them_active)
+
+        mae, rmse, baseline_mae = metrics(
+            embedding, hidden_bias, output, output_bias, validation
+        )
+        print(
+            f"epoch {epoch:2}: validation mae {mae:7.2f}, rmse {rmse:7.2f}, "
+            f"handcrafted mae {baseline_mae:7.2f}"
+        )
+        if mae < best_mae:
+            best_mae = mae
+            best = (embedding.copy(), hidden_bias.copy(), output.copy(), output_bias)
+
+    if best is None:
+        raise RuntimeError("training produced no model")
+    embedding, hidden_bias, output, output_bias = best
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        args.output,
+        embedding=embedding.astype(np.float16),
+        hidden_bias=hidden_bias.astype(np.float16),
+        output=output.astype(np.float16),
+        output_bias=np.asarray([output_bias], dtype=np.float16),
+        dataset_sha256=np.asarray([hashlib.sha256(args.dataset.read_bytes()).hexdigest()]),
+    )
+    print(f"wrote {args.output} ({args.output.stat().st_size:,} bytes), best mae {best_mae:.2f}")
+
+
+if __name__ == "__main__":
+    main()
