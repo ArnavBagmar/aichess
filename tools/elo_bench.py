@@ -127,6 +127,61 @@ def score_margin(tally: Tally) -> float:
     return math.sqrt(variance / tally.games)
 
 
+@dataclass(frozen=True)
+class Sprt:
+    """Bounds for a sequential test between two hypotheses about the Elo gain.
+
+    H0: the change is worth `elo0`. H1: it is worth `elo1`. The test runs until the
+    evidence for one over the other crosses a bound set by the error rates.
+    """
+
+    elo0: float = 0.0
+    elo1: float = 20.0
+    alpha: float = 0.05
+    beta: float = 0.05
+
+    @property
+    def lower(self) -> float:
+        return math.log(self.beta / (1.0 - self.alpha))
+
+    @property
+    def upper(self) -> float:
+        return math.log((1.0 - self.beta) / self.alpha)
+
+
+def expected_score(elo: float) -> float:
+    """Score one side is expected to make against an opponent `elo` weaker."""
+    return 1.0 / (1.0 + math.pow(10.0, -elo / 400.0))
+
+
+# Pseudo-count added to each of wins, draws and losses, so a clean sweep has a finite
+# variance and the ratio moves smoothly instead of jumping to infinity on game one.
+SPRT_REGULARISER = 0.5
+
+
+def log_likelihood_ratio(tally: Tally, sprt: Sprt) -> float:
+    """Generalised SPRT on trinomial results, the form cutechess-cli uses."""
+    if tally.games == 0:
+        return 0.0
+    total = tally.games + 3 * SPRT_REGULARISER
+    win = (tally.wins + SPRT_REGULARISER) / total
+    draw = (tally.draws + SPRT_REGULARISER) / total
+    mean = win + 0.5 * draw
+    variance = (win + 0.25 * draw) - mean * mean
+    s0 = expected_score(sprt.elo0)
+    s1 = expected_score(sprt.elo1)
+    return tally.games * (s1 - s0) * (2.0 * mean - s0 - s1) / (2.0 * variance)
+
+
+def verdict(llr: float, sprt: Sprt) -> str | None:
+    """`accept` past the upper bound, `reject` past the lower, None while undecided."""
+    if llr >= sprt.upper:
+        return "accept"
+    if llr <= sprt.lower:
+        return "reject"
+    return None
+
+
 class Balancer:
     """Our own evaluation, used only to keep opening positions near-equal."""
 
