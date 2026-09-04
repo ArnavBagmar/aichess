@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import statistics
 from pathlib import Path
 
 from harness.referee import FAILED_TERMINATIONS, Outcome, play_match
 from harness.sandbox import local
-from tools.benchmark import POSITIONS
+from tools.benchmark import POSITIONS, Position
 
 
 def agent_score(outcome: Outcome, agent_is_white: bool) -> float:
@@ -36,11 +37,26 @@ def main() -> None:
     parser.add_argument("--base-ms", type=int, default=5_000)
     parser.add_argument("--increment-ms", type=int, default=100)
     parser.add_argument("--pgn-dir", type=Path)
+    parser.add_argument(
+        "--fen-jsonl", type=Path, help="optional JSONL records containing a fen field"
+    )
     arguments = parser.parse_args()
 
     agent = arguments.agent.resolve()
     opponent = arguments.opponent.resolve()
-    selected = POSITIONS[: max(1, min(arguments.positions, len(POSITIONS)))]
+    if arguments.fen_jsonl:
+        records = (
+            json.loads(line)
+            for line in arguments.fen_jsonl.read_text(encoding="utf-8").splitlines()
+        )
+        selected = tuple(
+            Position(f"dataset_{index:04}", "dataset", record["fen"])
+            for index, record in enumerate(records, 1)
+        )[: arguments.positions]
+    else:
+        selected = POSITIONS[: max(1, min(arguments.positions, len(POSITIONS)))]
+    if not selected:
+        raise SystemExit("no starting positions selected")
     pentanomial = [0, 0, 0, 0, 0]
     game_scores: list[float] = []
     agent_failures: dict[str, int] = {}
