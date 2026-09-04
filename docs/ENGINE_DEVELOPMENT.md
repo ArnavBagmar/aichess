@@ -346,3 +346,14 @@ be measured should not displace work that can.
   is strong evidence that the bot exceeds this particular limited-strength opponent under the
   competition clock, but it is not a universal or formally anchored 2000 rating: confirm on more
   distinct positions and, when available, the actual public competition ladder.
+- A full supported-strength screening ladder then tested Stockfish 18 at 1320, 1400, 1500, 1600,
+  1700, 1800, 1900, and 2000. Stockfish does not accept a genuine UCI_Elo value below 1320. Each
+  level used the same two realistic positions with reversed colors (four games), 120+0.5 for the
+  agent, and 100 ms Stockfish moves. Results were: 1320 `+3 =0 -1` (75%); 1400 `+4 =0 -0`
+  (100%); 1500 `+4 =0 -0` (100%); 1600 `+4 =0 -0` (100%); 1700 `+2 =2 -0` (75%); 1800
+  `+2 =0 -2` (50%); 1900 `+2 =1 -1` (62.5%); and 2000 `+3 =0 -1` (75%). Across all 32 games
+  the agent scored `+24 =3 -5` (79.7%) with no failures. The non-monotonic 1800--2000 results show
+  that four games and two positions per level cannot define a rating curve; use this only to rule
+  out weakness against the lower levels. The existing 20-game 2000 confirmation remains the more
+  informative rating evidence. A brutally honest working estimate is 2050--2150 competition-clock
+  Elo, centered near 2100, pending broader positions and stronger opponents.
