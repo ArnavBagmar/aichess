@@ -67,3 +67,41 @@ def test_history_resets_when_the_fullmove_number_goes_backwards() -> None:
     searcher.note_root_position(chess.Board("8/8/4k3/8/8/4K3/8/7R w - - 0 40"))
     searcher.note_root_position(chess.Board("8/8/4k3/8/8/4K3/8/7R w - - 0 2"))
     assert len(searcher.game_history) == 1
+
+
+def test_tt_move_is_ordered_first() -> None:
+    searcher = make_searcher()
+    board = chess.Board()
+    quiet = chess.Move.from_uci("h2h3")
+    assert searcher.ordered_moves(board, 0, quiet)[0] == quiet
+
+
+def test_captures_precede_quiet_moves() -> None:
+    searcher = make_searcher()
+    # White queen on d1 can take the undefended rook on d8.
+    board = chess.Board("3r3k/8/8/8/8/8/8/3QK3 w - - 0 1")
+    ordered = searcher.ordered_moves(board, 0, None)
+    assert ordered[0] == chess.Move.from_uci("d1d8")
+
+
+def test_mvv_lva_prefers_the_more_valuable_victim() -> None:
+    searcher = make_searcher()
+    # White rook on a1 may take a queen on a8 or a knight on g1.
+    board = chess.Board("q6k/8/8/8/8/8/8/R5nK w - - 0 1")
+    ordered = searcher.ordered_moves(board, 0, None)
+    assert ordered[0] == chess.Move.from_uci("a1a8")
+
+
+def test_ordered_moves_is_a_permutation_of_the_legal_moves() -> None:
+    searcher = make_searcher()
+    board = chess.Board("r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 4 4")
+    assert sorted(searcher.ordered_moves(board, 0, None), key=str) == sorted(
+        board.legal_moves, key=str
+    )
+
+
+def test_ordered_captures_are_all_captures_or_promotions() -> None:
+    searcher = make_searcher()
+    board = chess.Board("3r3k/8/8/8/8/8/6P1/3QK3 w - - 0 1")
+    for move in searcher.ordered_captures(board):
+        assert board.is_capture(move) or move.promotion is not None
