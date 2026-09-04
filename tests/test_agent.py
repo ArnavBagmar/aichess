@@ -67,6 +67,10 @@ class SearchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             get_move(checkmate, 1_000)
 
+    def test_draw_detection_preserves_insufficient_material(self) -> None:
+        self.assertTrue(Engine._is_draw(chess.Board("7k/8/8/8/8/8/8/K7 w - - 0 1")))
+        self.assertFalse(Engine._is_draw(chess.Board("7k/7p/8/8/8/8/8/K7 w - - 0 1")))
+
     def test_mate_scores_round_trip_through_tt_encoding(self) -> None:
         engine = Engine()
         for score in (MATE - 7, -MATE + 9, 123, -456):

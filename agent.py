@@ -372,7 +372,10 @@ class Engine:
 
     @staticmethod
     def _is_draw(board: chess.Board) -> bool:
-        if board.halfmove_clock >= 100 or board.is_insufficient_material():
+        if board.halfmove_clock >= 100:
+            return True
+        sufficient_material = board.pawns | board.rooks | board.queens
+        if not sufficient_material and board.is_insufficient_material():
             return True
         return len(board.move_stack) >= 8 and board.is_repetition(3)
 

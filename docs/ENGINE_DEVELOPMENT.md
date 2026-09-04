@@ -329,3 +329,12 @@ be measured should not displace work that can.
   regression test. That guarded version completed a deliberately harsh 20-game 1+0.1 stress match
   with no failures and scored 55%. Pondering remains optional acceleration; exceptions are isolated
   from move selection and the worker is always joined before the engine handles a real position.
+- Profiling attributed about 3.5% of search time to unconditional insufficient-material checks.
+  Pawns, rooks, or queens make python-chess's answer immediately false, so an exact bitboard guard
+  now skips the full test in normal positions. The guarded path measured 3.22x faster (about 0.85
+  microseconds saved per call) and improved the back-to-back whole-search benchmark from 21,357 to
+  21,915 nodes/s (2.6%) without changing searched scores or moves.
+- A selective extension for quiet moves that newly attack the enemy queen was tested against the
+  `17.Nxe6!` horizon failure and rejected. It still missed the tactic at depth 5 while increasing
+  that search from roughly 73,000 to 89,000 nodes. Do not reintroduce broad queen-threat extensions
+  without a substantially cheaper and better-targeted formulation.
