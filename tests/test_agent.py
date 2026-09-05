@@ -103,6 +103,20 @@ class SearchTests(unittest.TestCase):
 
         self.assertIsNone(agent._PONDER_THREAD)
 
+    def test_repeated_root_move_is_only_avoided_when_ahead(self) -> None:
+        engine = Engine()
+        ahead = chess.Board("6k1/8/8/8/8/8/R7/6K1 w - - 0 1")
+        key = agent._tt_key(ahead)
+        remembered = chess.Move.from_uci("a2a3")
+        engine.root_choices[key] = remembered
+
+        self.assertEqual(engine._repetition_move(ahead, key), remembered)
+
+        equal = chess.Board()
+        equal_key = agent._tt_key(equal)
+        engine.root_choices[equal_key] = chess.Move.from_uci("e2e4")
+        self.assertIsNone(engine._repetition_move(equal, equal_key))
+
     def test_benchmark_corpus_contains_legal_nonterminal_positions(self) -> None:
         phases = set()
         for position in POSITIONS:

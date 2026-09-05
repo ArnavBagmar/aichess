@@ -36,6 +36,9 @@ NNUE_ACTIVATION_SCALE: Final = 256
 NNUE_OUTPUT_SCALE: Final = 4096
 NNUE_SCORE_SCALE: Final = 400
 NNUE_BLEND_DENOMINATOR: Final = 2
+REPETITION_AVOID_THRESHOLD: Final = 150
+REPETITION_MOVE_PENALTY: Final = 600
+ROOT_HISTORY_CAPACITY: Final = 512
 
 _nnue = np.load(Path(__file__).with_name("nnue.npz"))
 NNUE_EMBEDDING: Final = _nnue["embedding"]
@@ -352,6 +355,8 @@ class Engine:
         self.deadline = 0.0
         self.age = 0
         self.cancelled = False
+        self.root_choices: dict[object, chess.Move] = {}
+        self.repeated_root_move: chess.Move | None = None
 
     def _check_time(self) -> None:
         if self.nodes & TIME_CHECK_MASK == 0 and (
@@ -436,6 +441,12 @@ class Engine:
             self.tt.clear()
         if old is None or entry.depth >= old.depth or entry.age > old.age:
             self.tt[key] = entry
+
+    def _repetition_move(self, board: chess.Board, root_key: object) -> chess.Move | None:
+        previous_choice = self.root_choices.get(root_key)
+        if previous_choice is None or self._evaluate(board) < REPETITION_AVOID_THRESHOLD:
+            return None
+        return previous_choice
 
     @staticmethod
     def _is_draw(board: chess.Board) -> bool:
@@ -601,6 +612,8 @@ class Engine:
                         score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1, True)
             finally:
                 board.pop()
+            if move == self.repeated_root_move:
+                score -= REPETITION_MOVE_PENALTY
             if score > best_score:
                 best_score, best_move = score, move
             alpha = max(alpha, score)
@@ -675,8 +688,11 @@ class Engine:
         if not moves:
             raise ValueError("get_move called on a terminal position")
         fallback = moves[0]
+        root_key = _tt_key(board)
+        self.repeated_root_move = self._repetition_move(board, root_key)
         if len(moves) == 1 or time_left_ms <= 5:
             self.stats.elapsed_s = time.perf_counter() - call_start
+            self.root_choices[root_key] = fallback
             return fallback
 
         soft_budget, hard_budget = self._time_budget(time_left_ms)
@@ -710,6 +726,10 @@ class Engine:
                 break
         self.stats.nodes = self.nodes
         self.stats.elapsed_s = time.perf_counter() - start
+        if len(self.root_choices) >= ROOT_HISTORY_CAPACITY:
+            self.root_choices.clear()
+        self.root_choices[root_key] = best_move
+        self.repeated_root_move = None
         return best_move
 
 

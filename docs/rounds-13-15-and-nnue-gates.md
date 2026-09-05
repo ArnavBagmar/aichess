@@ -20,6 +20,18 @@ Aggregate: +1 =2 -0, no crash, flag, illegal move, or initialization failure. Th
 good tactical reliability, but also a need for better repetition/conversion judgment. The 5.8
 second finish is safe but close enough that time use should continue to be monitored.
 
+### Cross-call repetition correction
+
+The API supplies a FEN on every turn, so a newly constructed `chess.Board` has no game move stack.
+The old engine could recognize a repetition inside one search line but could not recognize that an
+actual root position had returned across API calls. The engine now remembers its prior choice for
+each root. If the identical root returns while the static evaluation is at least +150 cp, it applies
+a strong penalty to repeating the same continuation. At equal or negative evaluation it keeps the
+normal move, preserving valuable perpetual-check draws. A targeted regression confirms that a
+clearly winning repeated root changes continuation. General-play A/B was neutral at +6 =8 -6 over
+20 paired games, with no failures; this is retained as a narrowly activated correctness safeguard,
+not claimed as measured Elo gain.
+
 ## Quantized residual HalfKP
 
 The team-trained 32-unit HalfKP residual network was quantized to int16 and evaluated through a
