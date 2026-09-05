@@ -28,6 +28,7 @@ class Example:
     teacher_residual: float
     baseline: float
     validation: bool
+    phase_bucket: int
 
 
 def halfkp_indices(board: chess.Board, perspective: chess.Color) -> NDArray[np.int32]:
@@ -46,16 +47,38 @@ def halfkp_indices(board: chess.Board, perspective: chess.Color) -> NDArray[np.i
     return np.asarray(indices, dtype=np.int32)
 
 
-def load_examples(path: Path, deployment_blend: float = 1.0) -> list[Example]:
+def load_examples(
+    path: Path,
+    deployment_blend: float = 1.0,
+    split_by_game: bool = True,
+    phase_buckets: int = 1,
+) -> list[Example]:
     examples: list[Example] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         record = json.loads(line)
         board = chess.Board(record["fen"])
         side = board.turn
-        digest = hashlib.blake2b(record["fen"].encode(), digest_size=2).digest()
+        source = record.get("source")
+        game_id = source.get("game_id") if isinstance(source, dict) else None
+        split_key = str(game_id) if split_by_game and game_id else record["fen"]
+        digest = hashlib.blake2b(split_key.encode(), digest_size=2).digest()
         validation = int.from_bytes(digest, "little") % 10 == 0
         baseline = float(evaluate(board, use_residual=False)) / SCORE_SCALE
         teacher_residual = float(record["score_cp"]) / SCORE_SCALE - baseline
+        phase = min(
+            24,
+            sum(
+                weight * len(board.pieces(piece_type, color))
+                for piece_type, weight in (
+                    (chess.KNIGHT, 1),
+                    (chess.BISHOP, 1),
+                    (chess.ROOK, 2),
+                    (chess.QUEEN, 4),
+                )
+                for color in chess.COLORS
+            ),
+        )
+        phase_bucket = min(phase_buckets - 1, phase * phase_buckets // 25)
         examples.append(
             Example(
                 halfkp_indices(board, side),
@@ -64,6 +87,7 @@ def load_examples(path: Path, deployment_blend: float = 1.0) -> list[Example]:
                 teacher_residual,
                 baseline,
                 validation,
+                phase_bucket,
             )
         )
     return examples
@@ -77,9 +101,14 @@ def forward(
     example: Example,
 ) -> tuple[float, NDArray[np.float32], NDArray[np.float32]]:
     width = hidden_bias.shape[0]
+    offset = example.phase_bucket * width * 2
     us = np.clip(hidden_bias + embedding[example.us].sum(axis=0), 0.0, 1.0)
     them = np.clip(hidden_bias + embedding[example.them].sum(axis=0), 0.0, 1.0)
-    prediction = float(us @ output[:width] + them @ output[width:] + output_bias)
+    prediction = float(
+        us @ output[offset : offset + width]
+        + them @ output[offset + width : offset + 2 * width]
+        + output_bias
+    )
     return prediction, us, them
 
 
@@ -110,6 +139,7 @@ def main() -> None:
     parser.add_argument("dataset", type=Path)
     parser.add_argument("--output", type=Path, default=Path("weights/nnue.npz"))
     parser.add_argument("--hidden", type=int, default=32)
+    parser.add_argument("--phase-buckets", type=int, default=1)
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--learning-rate", type=float, default=0.002)
     parser.add_argument("--seed", type=int, default=20260904)
@@ -119,11 +149,24 @@ def main() -> None:
         default=1.0,
         help="fraction of the residual applied by the deployed engine",
     )
+    parser.add_argument(
+        "--split-by",
+        choices=("game", "position"),
+        default="game",
+        help="keep positions from one source game in the same data split",
+    )
     args = parser.parse_args()
 
     if not 0.0 < args.deployment_blend <= 1.0:
         raise SystemExit("deployment blend must be in (0, 1]")
-    examples = load_examples(args.dataset, args.deployment_blend)
+    if args.phase_buckets < 1:
+        raise SystemExit("phase buckets must be positive")
+    examples = load_examples(
+        args.dataset,
+        args.deployment_blend,
+        split_by_game=args.split_by == "game",
+        phase_buckets=args.phase_buckets,
+    )
     train = [example for example in examples if not example.validation]
     validation = [example for example in examples if example.validation]
     if not train or not validation:
@@ -132,7 +175,7 @@ def main() -> None:
     rng = np.random.default_rng(args.seed)
     embedding = rng.normal(0.0, 0.01, (FEATURES, args.hidden)).astype(np.float32)
     hidden_bias = np.full(args.hidden, 0.1, dtype=np.float32)
-    output = rng.normal(0.0, 0.02, args.hidden * 2).astype(np.float32)
+    output = rng.normal(0.0, 0.02, args.hidden * 2 * args.phase_buckets).astype(np.float32)
     output_bias = np.float32(0.0)
     best_mae = math.inf
     best: (
@@ -151,11 +194,14 @@ def main() -> None:
             )
             error = np.float32(np.clip(prediction - example.target, -2.5, 2.5))
             old_output = output.copy()
-            output[: args.hidden] -= rate * error * us
-            output[args.hidden :] -= rate * error * them
+            offset = example.phase_bucket * args.hidden * 2
+            output[offset : offset + args.hidden] -= rate * error * us
+            output[offset + args.hidden : offset + 2 * args.hidden] -= rate * error * them
             output_bias -= rate * error
-            us_gradient = error * old_output[: args.hidden]
-            them_gradient = error * old_output[args.hidden :]
+            us_gradient = error * old_output[offset : offset + args.hidden]
+            them_gradient = error * old_output[
+                offset + args.hidden : offset + 2 * args.hidden
+            ]
             us_active = (us > 0.0) & (us < 1.0)
             them_active = (them > 0.0) & (them < 1.0)
             embedding[example.us] -= rate * us_gradient * us_active
@@ -189,6 +235,7 @@ def main() -> None:
         output=output.astype(np.float16),
         output_bias=np.asarray([output_bias], dtype=np.float16),
         deployment_blend=np.asarray([args.deployment_blend], dtype=np.float16),
+        phase_buckets=np.asarray([args.phase_buckets], dtype=np.int16),
         dataset_sha256=np.asarray([hashlib.sha256(args.dataset.read_bytes()).hexdigest()]),
     )
     print(f"wrote {args.output} ({args.output.stat().st_size:,} bytes), best mae {best_mae:.2f}")

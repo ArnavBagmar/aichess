@@ -116,6 +116,25 @@ All three experiments had zero crashes, flags, illegal moves, or initialization 
 results reinforce that fast-clock screening is useful for rejecting weak ideas but is not enough
 by itself to promote a search heuristic for 120+0.5 play.
 
+## Wider and phase-bucketed evaluator experiments
+
+The data splitter now hashes source game IDs by default, keeping every position from one game
+entirely in either training or validation. On this stricter game-disjoint split, the handcrafted
+evaluator scored 160.9 cp MAE.
+
+- HalfKP64 reached 145.9 cp held-out MAE, but full inference fell to about 15,000 NPS and lost
+  completed depth across most benchmark positions. It was rejected at the runtime gate before
+  games.
+- HalfKP32 with three material-phase output heads reached 145.3 cp held-out MAE while retaining
+  about 24,700 NPS. Its fresh paired pilot scored +8 =4 -8 (50%) over 20 games, so it was rejected
+  without confirmation.
+- Reducing the proven residual blend from 50% to 33% scored +7 =4 -9 (45%) over 20 fresh games.
+  The shipped 50% calibration remains unchanged.
+
+Inference and training now support variable hidden widths and phase-bucketed output heads, making
+these architecture experiments reproducible without locking the submission to an unproven model.
+The shipped weight file still has one 32-unit output head and therefore retains identical scoring.
+
 ## Upper-strength stress test
 
 Against the local Stockfish 2700 configuration at the fast test clock, the promoted candidate

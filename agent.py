@@ -45,6 +45,7 @@ NNUE_EMBEDDING: Final = _nnue["embedding"]
 NNUE_HIDDEN_BIAS: Final = _nnue["hidden_bias"]
 NNUE_OUTPUT: Final = _nnue["output"]
 NNUE_OUTPUT_BIAS_CP: Final = int(_nnue["output_bias_cp"][0])
+NNUE_HIDDEN_SIZE: Final = int(NNUE_HIDDEN_BIAS.shape[0])
 _nnue.close()
 
 
@@ -143,17 +144,18 @@ def _compiled_piece_score(bitboards: NDArray[np.uint64]) -> tuple[int, int, int]
 def _compiled_nnue_residual(
     bitboards: NDArray[np.uint64],
     turn_index: int,
+    phase: int,
     white_king: int,
     black_king: int,
     embedding: NDArray[np.int16],
     hidden_bias: NDArray[np.int16],
     output: NDArray[np.int16],
 ) -> int:
-    accumulators = np.empty((2, 32), dtype=np.int32)
+    accumulators = np.empty((2, NNUE_HIDDEN_SIZE), dtype=np.int32)
     for perspective_slot in range(2):
         perspective = turn_index if perspective_slot == 0 else 1 - turn_index
         king = white_king if perspective == 1 else black_king ^ 56
-        for hidden in range(32):
+        for hidden in range(NNUE_HIDDEN_SIZE):
             accumulators[perspective_slot, hidden] = hidden_bias[hidden]
         for color_index in range(2):
             relation = 0 if color_index == perspective else 1
@@ -164,14 +166,16 @@ def _compiled_nnue_residual(
                         oriented_square = square if perspective == 1 else square ^ 56
                         feature = (king * 10 + relation * 5 + piece_index) * 64
                         feature += oriented_square
-                        for hidden in range(32):
+                        for hidden in range(NNUE_HIDDEN_SIZE):
                             accumulators[perspective_slot, hidden] += embedding[
                                 feature, hidden
                             ]
     total = 0
+    bucket_count = output.shape[0] // (2 * NNUE_HIDDEN_SIZE)
+    bucket = min(bucket_count - 1, phase * bucket_count // (MAX_PHASE + 1))
     for slot in range(2):
-        offset = slot * 32
-        for hidden in range(32):
+        offset = (bucket * 2 + slot) * NNUE_HIDDEN_SIZE
+        for hidden in range(NNUE_HIDDEN_SIZE):
             activation = accumulators[slot, hidden]
             activation = min(max(activation, 0), NNUE_ACTIVATION_SCALE)
             total += activation * output[offset + hidden]
@@ -330,6 +334,7 @@ def evaluate(
             residual = NNUE_OUTPUT_BIAS_CP + _compiled_nnue_residual(
                 buffer,
                 int(board.turn),
+                phase,
                 white_king,
                 black_king,
                 NNUE_EMBEDDING,
@@ -776,6 +781,7 @@ _compiled_piece_score(_warmup_bitboards)
 _compiled_nnue_residual(
     _warmup_bitboards,
     1,
+    MAX_PHASE,
     chess.E1,
     chess.E8,
     NNUE_EMBEDDING,

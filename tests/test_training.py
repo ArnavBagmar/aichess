@@ -20,6 +20,7 @@ class TrainingPipelineTests(unittest.TestCase):
             teacher_residual=1.0,
             baseline=0.0,
             validation=True,
+            phase_bucket=0,
         )
         embedding = np.empty((0, 1), dtype=np.float32)
         hidden_bias = np.zeros(1, dtype=np.float32)
