@@ -98,6 +98,24 @@ whole-search benchmark was 20,153 NPS versus 23,580 NPS for full recomputation, 
 Because this 32-unit network is unusually small, Python-side move bookkeeping costs more than the
 compiled full evaluation saves. The architecture was therefore rejected before game testing.
 
+## Selective-search experiments
+
+Three targeted search changes were tested against the frozen incumbent on fresh, color-reversed
+positions. None met the complete promotion gate:
+
+- Shallow recapture extensions increased tactical tree size, lost completed depth in six of ten
+  benchmark positions, and scored +6 =5 -9 (42.5%) over 20 fast games. Rejected.
+- Countermove ordering preserved benchmark depth but scored +7 =6 -7 (50%) over 20 fast games.
+  Rejected without confirmation.
+- Conservative depth-one late-move futility pruning scored +8 =6 -6 (55%) in its pilot and
+  +17 =8 -15 (52.5%) in a fresh 40-game confirmation. The combined fast result was 53.3%, but
+  the required official-clock transfer check scored +1 =1 -2 (37.5%). Rejected rather than
+  promoting a change that was not robust at the competition time control.
+
+All three experiments had zero crashes, flags, illegal moves, or initialization failures. These
+results reinforce that fast-clock screening is useful for rejecting weak ideas but is not enough
+by itself to promote a search heuristic for 120+0.5 play.
+
 ## Upper-strength stress test
 
 Against the local Stockfish 2700 configuration at the fast test clock, the promoted candidate
