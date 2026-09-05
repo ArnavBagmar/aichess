@@ -19,6 +19,7 @@ literals, and whether a null move is allowed lives in a per-ply array instead of
 boolean parameter.
 """
 
+import math
 import time
 from collections.abc import Callable
 from typing import Any, Final, cast
@@ -77,11 +78,32 @@ NULL_MIN_DEPTH: Final = 3
 NULL_REDUCTION: Final = 2
 
 # Late move reductions. Moves the ordering put late are searched shallower first, and
-# only re-searched at full depth if they beat alpha after all.
+# only re-searched at full depth if they beat alpha after all. The reduction grows with
+# the log of both depth and move number, the shape every strong engine converged on:
+# at depth 3 a fifth move loses one ply, at depth 9 a tenth move loses three.
 LMR_MIN_DEPTH: Final = 3
 LMR_MIN_MOVES: Final = 4
-LMR_LATE_MOVES: Final = 8
-LMR_DEEP: Final = 6
+
+
+def _lmr_table() -> npt.NDArray[np.int64]:
+    table = np.zeros((MAX_DEPTH + 1, 256), dtype=np.int64)
+    for depth in range(1, MAX_DEPTH + 1):
+        for index in range(1, 256):
+            table[depth, index] = int(0.75 + math.log(depth) * math.log(index) / 2.25)
+    return table
+
+
+LMR_TABLE: Final = _lmr_table()
+
+# Late move pruning: near the leaves, once a few quiet moves have been searched the
+# rest are skipped outright. Indexed by depth: the number of moves searched first.
+LMP_MAX_DEPTH: Final = 3
+LMP_LIMIT: Final = np.array([0, 5, 11, 21], dtype=np.int64)
+
+# Futility pruning at frontier nodes: a quiet move cannot lift a static evaluation
+# this far below alpha within the plies that remain, so it is not searched.
+FUTILITY_MAX_DEPTH: Final = 2
+FUTILITY_MARGIN: Final = 200 * SCORE_PER_CP  # about a pawn on the net's scale
 
 # The net does not score in nominal centipawns (a pawn is ~185, a knight ~1660 on
 # Engine.evaluate_cp); every margin below is sized to that scale, as in phase 5.
@@ -452,12 +474,15 @@ def search(
         return best
 
     # ---- main search ---------------------------------------------------------------------
+    static = -2 * MATE
+    have_static = False
     if ply > 0 and depth <= RFP_MAX_DEPTH and not in_check and beta < MATE_THRESHOLD:
         # Reverse futility: a static evaluation comfortably above beta is trusted.
         static = evaluate(
             ply, state, occupied, white_acc, black_acc, white_psqt, black_psqt,
             act, l1c, l1x, l2c, l2x, l1_w, l1_b, l2_w, l2_b, out_w, out_b,
         )  # fmt: skip
+        have_static = True
         if static - RFP_MARGIN * depth >= beta:
             return static
 
@@ -498,16 +523,37 @@ def search(
         move = pick_next(moves[ply], scores[ply], i, count)
         if not make_move(pieces, occupied, mailbox, state, keys, ply, move):
             continue
-        update_ply(
-            ft_w, ft_b, psqt_w, mailbox, state, ply, move,
-            white_acc, black_acc, white_psqt, black_psqt,
-        )  # fmt: skip
         index = legal
-        legal += 1
         tactical = is_tactical(move)
         gives_check = is_attacked(
             pieces[ply + 1], int(state[ply + 1, WKING + (stm ^ 1)]), stm, occupied[ply + 1, 2]
         )
+        # Near the leaves a quiet, non-checking move is skipped once enough moves have
+        # been searched (late move pruning) or when the static evaluation is too far
+        # below alpha for one quiet move to repair (futility). Never at the root, in
+        # check, before one move has been searched, or when a mate is in the window.
+        if (
+            ply > 0
+            and legal > 0
+            and not in_check
+            and not tactical
+            and not gives_check
+            and best > -MATE_THRESHOLD
+            and beta < MATE_THRESHOLD
+        ):
+            if depth <= LMP_MAX_DEPTH and index >= LMP_LIMIT[depth]:
+                continue
+            if (
+                depth <= FUTILITY_MAX_DEPTH
+                and have_static
+                and static + FUTILITY_MARGIN * depth <= alpha
+            ):
+                continue
+        legal += 1
+        update_ply(
+            ft_w, ft_b, psqt_w, mailbox, state, ply, move,
+            white_acc, black_acc, white_psqt, black_psqt,
+        )  # fmt: skip
         # Checks are forcing: a line of them is cheap to follow and expensive to cut
         # short, so a checking move is searched one ply deeper.
         child = depth - 1 + (1 if gives_check else 0)
@@ -519,7 +565,7 @@ def search(
             and not in_check
             and not gives_check
         ):
-            reduction = 2 if (index >= LMR_LATE_MOVES and depth >= LMR_DEEP) else 1
+            reduction = int(min(LMR_TABLE[depth, index], child - 1))
         if index == 0:
             score = -search(child, ply + 1, -beta, -alpha, board, acc, net, tables, ctrl, deadline)
         else:

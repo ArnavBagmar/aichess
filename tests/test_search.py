@@ -70,6 +70,22 @@ def test_tt_packing_round_trips() -> None:
     assert sk.tt_score(data) == -123456
 
 
+def test_lmr_table_grows_with_depth_and_move_number() -> None:
+    assert sk.LMR_TABLE[3, 4] == 1
+    assert sk.LMR_TABLE[9, 10] == 2
+    assert sk.LMR_TABLE[12, 20] == 4
+    for depth in range(3, 20):
+        for index in range(4, 60):
+            assert sk.LMR_TABLE[depth, index] <= sk.LMR_TABLE[depth + 1, index]
+            assert sk.LMR_TABLE[depth, index] <= sk.LMR_TABLE[depth, index + 1]
+
+
+def test_pruning_limits_are_ordered() -> None:
+    assert list(sk.LMP_LIMIT) == sorted(sk.LMP_LIMIT)
+    assert sk.LMP_LIMIT[sk.LMP_MAX_DEPTH] > sk.LMR_MIN_MOVES
+    assert sk.FUTILITY_MAX_DEPTH < sk.RFP_MAX_DEPTH + 1
+
+
 def test_aspiration_window_brackets_the_previous_score() -> None:
     alpha, beta, window = search.aspiration_window(1000, search.ASPIRATION_MIN_DEPTH)
     assert alpha == 1000 - window
