@@ -96,6 +96,7 @@ class Searcher:
     def __init__(self, net: NetworkWeights) -> None:
         self.net = net
         self.board = bb.new_stacks()
+        self._after = bb.new_stacks()  # scratch for the position our move creates
         self.acc = nb.new_acc_stacks()
         self.tt_keys = np.zeros(TT_SIZE, dtype=np.uint64)
         self.tt_data = np.zeros(TT_SIZE, dtype=np.int64)
@@ -108,6 +109,7 @@ class Searcher:
         self.null_flags = np.zeros(bb.MAX_PLY, dtype=np.int8)  # 1 where a null move was made
         self.ctrl = np.zeros(CTRL_SIZE, dtype=np.int64)
         self.nodes = 0
+        self.score = 0
         self._last_fullmove = 0
         self._net_tuple = (
             net.ft_w,
@@ -144,9 +146,26 @@ class Searcher:
             self.ctrl[CTRL_GAME_KEYS] = 0
         self._last_fullmove = board.fullmove_number
         bb.set_from_board(board, self.board, 0)
+        self._remember(self.board.keys[0])
+
+    def note_move_played(self, board: chess.Board, move: chess.Move) -> None:
+        """Record the position our own move creates.
+
+        The platform ends a game as soon as the side to move could claim a repetition,
+        so a position we have created twice is a draw waiting to happen even if we
+        never repeat it a third time. Six rated draws in won positions were exactly
+        that: the engine shuffled through positions after its own moves, which were
+        never in its history, until a claim opened up on its turn.
+        """
+        after = board.copy(stack=False)
+        after.push(move)
+        bb.set_from_board(after, self._after, 0)
+        self._remember(self._after.keys[0])
+
+    def _remember(self, key: np.uint64) -> None:
         n = int(self.ctrl[CTRL_GAME_KEYS])
         if n < MAX_GAME_KEYS:
-            self.game_keys[n] = self.board.keys[0]
+            self.game_keys[n] = key
             self.ctrl[CTRL_GAME_KEYS] = n + 1
 
     def is_draw_key(self, key: np.uint64) -> bool:
@@ -231,13 +250,19 @@ class Searcher:
             if abs(score) >= MATE_THRESHOLD:
                 break  # a forced mate is as good as it gets
         self.nodes = int(self.ctrl[CTRL_NODES])
+        self.score = score  # last completed iteration, for the side to move, 1/32 cp
 
+        chosen = legal[0]
         if best >= 0:
-            chosen = bb.move_to_chess(best)
-            if chosen in legal:
-                return chosen
-            print(f"kernel proposed illegal {chosen.uci()} in {fen!r}; playing the first legal")
-        return legal[0]
+            proposed = bb.move_to_chess(best)
+            if proposed in legal:
+                chosen = proposed
+            else:
+                print(
+                    f"kernel proposed illegal {proposed.uci()} in {fen!r}; playing the first legal"
+                )
+        self.note_move_played(board, chosen)
+        return chosen
 
     def warm_up(self) -> None:
         """Compile every kernel inside the import budget, then leave no state behind."""

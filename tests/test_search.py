@@ -179,21 +179,32 @@ def test_history_resets_when_the_fullmove_number_goes_backwards(searcher: Search
     assert searcher.ctrl[sk.CTRL_GAME_KEYS] == 1
 
 
-def test_avoids_repeating_when_winning(searcher: Searcher) -> None:
-    # K+Q vs K: the search must convert rather than shuffle into a threefold.
+def test_position_after_our_move_is_remembered(searcher: Searcher) -> None:
     searcher.warm_up()
     board = chess.Board("7k/8/8/8/8/8/8/K6Q w - - 0 1")
-    seen: dict[str, int] = {}
-    for _ in range(40):
+    move = searcher.pick(board.fen(), 500)
+    board.push(move)
+    stacks = bb.new_stacks()
+    bb.set_from_board(board, stacks, 0)
+    assert searcher.is_draw_key(stacks.keys[0])
+
+
+def test_never_lets_a_repetition_claim_open_while_winning(searcher: Searcher) -> None:
+    # K+Q vs K against a shuffling king. The platform ends a game the moment the side
+    # to move could claim a threefold, so no position may ever become claimable after
+    # one of our moves, and the game must still be converted.
+    searcher.warm_up()
+    board = chess.Board("7k/8/8/8/8/8/8/K6Q w - - 0 1")
+    for _ in range(60):
         if board.is_game_over():
             break
         board.push(searcher.pick(board.fen(), 1500))
+        assert not board.can_claim_threefold_repetition(), board.fen()
         if board.is_game_over():
             break
         board.push(min(board.legal_moves, key=lambda m: m.uci()))
-        key = board.board_fen() + " " + ("w" if board.turn else "b")
-        seen[key] = seen.get(key, 0) + 1
-    assert board.is_checkmate() or max(seen.values()) < 3
+        assert not board.can_claim_threefold_repetition(), board.fen()
+    assert board.is_checkmate(), board.fen()
 
 
 def test_agent_returns_legal_uci() -> None:
