@@ -5,7 +5,8 @@ from pathlib import Path
 
 from harness.rules import MAX_UNZIPPED_BYTES
 
-DEFAULT_INCLUDES = ("weights",)
+# Submission assets are explicit: experimental checkpoints must never be swept in.
+DEFAULT_INCLUDES = ("nnue.npz",)
 SKIP = {"__pycache__", ".DS_Store"}
 
 

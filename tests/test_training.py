@@ -3,14 +3,37 @@ import unittest
 from collections import defaultdict
 
 import chess
+import numpy as np
 
 from tools.label_positions import random_position
 from tools.train_evaluator import FEATURES, features
 from tools.train_nnue import FEATURES as NNUE_FEATURES
-from tools.train_nnue import halfkp_indices
+from tools.train_nnue import Example, halfkp_indices, metrics
 
 
 class TrainingPipelineTests(unittest.TestCase):
+    def test_nnue_metrics_measure_the_deployed_blend(self) -> None:
+        example = Example(
+            us=np.empty(0, dtype=np.int32),
+            them=np.empty(0, dtype=np.int32),
+            target=2.0,
+            teacher_residual=1.0,
+            baseline=0.0,
+            validation=True,
+        )
+        embedding = np.empty((0, 1), dtype=np.float32)
+        hidden_bias = np.zeros(1, dtype=np.float32)
+        output = np.zeros(2, dtype=np.float32)
+        mae, rmse, baseline_mae = metrics(
+            embedding,
+            hidden_bias,
+            output,
+            np.float32(2.0),
+            [example],
+            deployment_blend=0.5,
+        )
+        self.assertEqual((mae, rmse, baseline_mae), (0.0, 0.0, 400.0))
+
     def test_halfkp_features_are_bounded_and_perspective_sensitive(self) -> None:
         board = chess.Board()
         white = halfkp_indices(board, chess.WHITE)

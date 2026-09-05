@@ -25,6 +25,7 @@ class Example:
     us: NDArray[np.int32]
     them: NDArray[np.int32]
     target: float
+    teacher_residual: float
     baseline: float
     validation: bool
 
@@ -45,7 +46,7 @@ def halfkp_indices(board: chess.Board, perspective: chess.Color) -> NDArray[np.i
     return np.asarray(indices, dtype=np.int32)
 
 
-def load_examples(path: Path) -> list[Example]:
+def load_examples(path: Path, deployment_blend: float = 1.0) -> list[Example]:
     examples: list[Example] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         record = json.loads(line)
@@ -54,11 +55,13 @@ def load_examples(path: Path) -> list[Example]:
         digest = hashlib.blake2b(record["fen"].encode(), digest_size=2).digest()
         validation = int.from_bytes(digest, "little") % 10 == 0
         baseline = float(evaluate(board, use_residual=False)) / SCORE_SCALE
+        teacher_residual = float(record["score_cp"]) / SCORE_SCALE - baseline
         examples.append(
             Example(
                 halfkp_indices(board, side),
                 halfkp_indices(board, not side),
-                float(record["score_cp"]) / SCORE_SCALE - baseline,
+                teacher_residual / deployment_blend,
+                teacher_residual,
                 baseline,
                 validation,
             )
@@ -86,13 +89,16 @@ def metrics(
     output: NDArray[np.float32],
     output_bias: np.float32,
     examples: list[Example],
+    deployment_blend: float = 1.0,
 ) -> tuple[float, float, float]:
     errors: list[float] = []
     baseline_errors: list[float] = []
     for example in examples:
         prediction, _, _ = forward(embedding, hidden_bias, output, output_bias, example)
-        errors.append((prediction - example.target) * SCORE_SCALE)
-        baseline_errors.append(-example.target * SCORE_SCALE)
+        errors.append(
+            (deployment_blend * prediction - example.teacher_residual) * SCORE_SCALE
+        )
+        baseline_errors.append(-example.teacher_residual * SCORE_SCALE)
     mae = sum(abs(error) for error in errors) / len(errors)
     rmse = math.sqrt(sum(error * error for error in errors) / len(errors))
     baseline_mae = sum(abs(error) for error in baseline_errors) / len(baseline_errors)
@@ -107,9 +113,17 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--learning-rate", type=float, default=0.002)
     parser.add_argument("--seed", type=int, default=20260904)
+    parser.add_argument(
+        "--deployment-blend",
+        type=float,
+        default=1.0,
+        help="fraction of the residual applied by the deployed engine",
+    )
     args = parser.parse_args()
 
-    examples = load_examples(args.dataset)
+    if not 0.0 < args.deployment_blend <= 1.0:
+        raise SystemExit("deployment blend must be in (0, 1]")
+    examples = load_examples(args.dataset, args.deployment_blend)
     train = [example for example in examples if not example.validation]
     validation = [example for example in examples if example.validation]
     if not train or not validation:
@@ -149,7 +163,12 @@ def main() -> None:
             hidden_bias -= rate * (us_gradient * us_active + them_gradient * them_active)
 
         mae, rmse, baseline_mae = metrics(
-            embedding, hidden_bias, output, output_bias, validation
+            embedding,
+            hidden_bias,
+            output,
+            output_bias,
+            validation,
+            args.deployment_blend,
         )
         print(
             f"epoch {epoch:2}: validation mae {mae:7.2f}, rmse {rmse:7.2f}, "
@@ -169,6 +188,7 @@ def main() -> None:
         hidden_bias=hidden_bias.astype(np.float16),
         output=output.astype(np.float16),
         output_bias=np.asarray([output_bias], dtype=np.float16),
+        deployment_blend=np.asarray([args.deployment_blend], dtype=np.float16),
         dataset_sha256=np.asarray([hashlib.sha256(args.dataset.read_bytes()).hexdigest()]),
     )
     print(f"wrote {args.output} ({args.output.stat().st_size:,} bytes), best mae {best_mae:.2f}")

@@ -73,6 +73,31 @@ Two forcing-search experiments were rejected after paired testing:
 Neither is shipped. This guards against pilot-selection bias and preserves the strongest measured
 version rather than accumulating plausible but unproven heuristics.
 
+## Deeper-label and incremental-NNUE experiments
+
+A complete 32,607-position realistic Lichess corpus was relabelled by Stockfish 18 at depth 10.
+Three independently seeded HalfKP32 residuals reached 144.9--145.5 cp held-out MAE, compared with
+163.3 cp for the handcrafted evaluator on the same split. Better static-fit metrics did not
+translate reliably into games:
+
+- Seed 05 scored +4 =6 -10 (35%) in its 20-game pilot and was rejected.
+- Seed 06 scored +3 =7 -0 (65%) in a 10-game seed screen.
+- Seed 07 scored +5 =5 -0 (75%) on the same screen, then +11 =16 -13 (47.5%) in a
+  precommitted fresh 40-game confirmation and was rejected.
+- A deployment-calibrated model trained specifically for the engine's 50% residual blend reached
+  144.1 cp held-out deployed MAE, but scored +3 =9 -8 (37.5%) in its fresh 20-game pilot and was
+  rejected.
+
+The training tool now supports `--deployment-blend` and reports validation error for the score
+actually used by the engine. This makes future blend experiments correctly calibrated even though
+this particular candidate did not pass the game gate.
+
+An incremental HalfKP accumulator was also implemented and correctness-tested across ordinary
+moves, castling, en passant, promotion, king moves, null moves, and push/pop restoration. Its
+whole-search benchmark was 20,153 NPS versus 23,580 NPS for full recomputation, a 14.5% regression.
+Because this 32-unit network is unusually small, Python-side move bookkeeping costs more than the
+compiled full evaluation saves. The architecture was therefore rejected before game testing.
+
 ## Upper-strength stress test
 
 Against the local Stockfish 2700 configuration at the fast test clock, the promoted candidate
