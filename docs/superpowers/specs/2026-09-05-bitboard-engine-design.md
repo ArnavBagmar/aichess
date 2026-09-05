@@ -280,6 +280,39 @@ weights/nnue.npz`, 7.21 MB unzipped. From an extracted copy in a fresh interpret
 import 26.1 s, a middlegame move at a 90 s clock in 3.3 s, an endgame move at a 2 s
 clock in 0.3 s.
 
+### The rated draws, diagnosed (2026-09-05)
+
+Six rated games in `hackathongamesPNG/` ended `threefold_repetition` with our side
+ahead by 1 to 6 pawns of material. In none of them did any position occur three
+times: python-chess reports `is_repetition(3)` False and
+`can_claim_threefold_repetition()` True at the final position of all six, and the
+game ended at exactly the first ply where a claim became possible. The platform
+therefore ends a game as soon as the side to move *could* claim a repetition, and in
+all six games that side was us: one of our legal moves would have recreated a position
+already seen twice.
+
+Those twice-seen positions were ones our own moves had created. The searcher only
+remembered positions handed to it at the root (our turn), never the position after its
+own move, so the old engine shuffled through them freely; the search saw nothing
+repeated because the positions it was repeating were not in its history. The replay
+of the final plies with the new engine confirmed the diagnosis rather than the search:
+it scored every position +1200 to +3700 and deviated from the shuffles, but the hole
+in the history was the same.
+
+Fix: `Searcher.note_move_played` records the position after the chosen move. With
+both kinds of position in the history, the existing rule (any recurrence scores as a
+draw) keeps the engine from ever creating a position a second time while it is ahead,
+so no claim can open on its turn, and the opponent cannot open one either without our
+search having scored that line as a draw first. Tests: the post-move position is in
+the history, and K+Q vs a shuffling king is converted with
+`can_claim_threefold_repetition()` never true after any move. Replaying the final 14
+plies of all six games with the fixed engine and the true history: 42 engine moves,
+none would have opened a claim.
+
+The rules page fetched today says "FIDE draw rules apply" and "a game still running at
+600 plies is drawn"; the earlier note about material adjudication at 300 plies is
+stale.
+
 ### Task 7
 
 `nnue_engine.py` is gone. `nnue_bitboard.evaluate_board(net, board)` is the one-off
