@@ -11,8 +11,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-import search  # noqa: E402
-from nnue_engine import load_engine  # noqa: E402
+from search import load_searcher  # noqa: E402
 
 POSITIONS = {
     "opening": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
@@ -26,7 +25,7 @@ CLOCK_MS = 60_000  # budget_ms(60_000) is about 2.25 s per position
 
 
 def main() -> None:
-    searcher = search.Searcher(load_engine())
+    searcher = load_searcher()
     searcher.warm_up()
     total_nodes = 0
     total_seconds = 0.0

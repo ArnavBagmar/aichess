@@ -1,25 +1,23 @@
 """The submission entrypoint. The platform imports this file and calls get_move.
 
-Move choice is an alpha-beta search (`search.py`) over the trained NNUE evaluation
-(`nnue_engine` + `weights/nnue.npz`): iterative deepening to whatever depth the clock
-allows, with a quiescence search at the leaves so positions are never scored in the
-middle of an exchange. The searcher owns the transposition table and the record of
-positions we have been asked about, which is what makes repetitions visible; it lives
-for exactly one game.
+Move choice is an alpha-beta search over the trained NNUE evaluation. The board, move
+generation, accumulator updates and the search loop itself are numba kernels over
+bitboards (`bitboard.py`, `nnue_bitboard.py`, `search_kernel.py`); `search.py` is the
+thin Python root that runs iterative deepening and aspiration windows within the clock
+and checks the kernel's move against python-chess before returning it. The searcher
+owns the transposition table and the record of positions we have been asked about,
+which is what makes repetitions visible; it lives for exactly one game.
 """
 
 import random
 
 import chess
 
-from nnue_engine import load_engine, warm_up
-from search import Searcher
+from search import load_searcher
 
 # Import time runs once per game, inside a 60 second budget, before the clock starts.
 # Loading weights, compiling the numba kernels, and warming the search all happen here.
-_engine = load_engine()
-warm_up(_engine)
-_searcher = Searcher(_engine)
+_searcher = load_searcher()
 _searcher.warm_up()
 
 

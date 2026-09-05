@@ -42,6 +42,8 @@ files = [
     "agent.py",
     "bitboard.py",
     "nnue_bitboard.py",
+    "search.py",
+    "search_kernel.py",
     "nnue_arch.py",
     "nnue_features.py",
     "nnue_net.py",
