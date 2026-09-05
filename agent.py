@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 import chess
@@ -31,6 +32,17 @@ MG_VALUE: Final = (0, 100, 320, 335, 500, 930, 0)
 EG_VALUE: Final = (0, 120, 305, 330, 525, 940, 0)
 PHASE_WEIGHT: Final = (0, 0, 1, 1, 2, 4, 0)
 MAX_PHASE: Final = 24
+NNUE_ACTIVATION_SCALE: Final = 256
+NNUE_OUTPUT_SCALE: Final = 4096
+NNUE_SCORE_SCALE: Final = 400
+NNUE_BLEND_DENOMINATOR: Final = 2
+
+_nnue = np.load(Path(__file__).with_name("nnue.npz"))
+NNUE_EMBEDDING: Final = _nnue["embedding"]
+NNUE_HIDDEN_BIAS: Final = _nnue["hidden_bias"]
+NNUE_OUTPUT: Final = _nnue["output"]
+NNUE_OUTPUT_BIAS_CP: Final = int(_nnue["output_bias_cp"][0])
+_nnue.close()
 
 
 def _table(center: int, edge: int, advance: int = 0) -> tuple[int, ...]:
@@ -122,6 +134,45 @@ def _compiled_piece_score(bitboards: NDArray[np.uint64]) -> tuple[int, int, int]
                     )
                     phase += PHASE_WEIGHT_ARRAY[piece_type]
     return mg, eg, phase
+
+
+@njit(cache=False)
+def _compiled_nnue_residual(
+    bitboards: NDArray[np.uint64],
+    turn_index: int,
+    white_king: int,
+    black_king: int,
+    embedding: NDArray[np.int16],
+    hidden_bias: NDArray[np.int16],
+    output: NDArray[np.int16],
+) -> int:
+    accumulators = np.empty((2, 32), dtype=np.int32)
+    for perspective_slot in range(2):
+        perspective = turn_index if perspective_slot == 0 else 1 - turn_index
+        king = white_king if perspective == 1 else black_king ^ 56
+        for hidden in range(32):
+            accumulators[perspective_slot, hidden] = hidden_bias[hidden]
+        for color_index in range(2):
+            relation = 0 if color_index == perspective else 1
+            for piece_index in range(5):
+                pieces = bitboards[color_index * 6 + piece_index]
+                for square in range(64):
+                    if pieces & (np.uint64(1) << np.uint64(square)):
+                        oriented_square = square if perspective == 1 else square ^ 56
+                        feature = (king * 10 + relation * 5 + piece_index) * 64
+                        feature += oriented_square
+                        for hidden in range(32):
+                            accumulators[perspective_slot, hidden] += embedding[
+                                feature, hidden
+                            ]
+    total = 0
+    for slot in range(2):
+        offset = slot * 32
+        for hidden in range(32):
+            activation = accumulators[slot, hidden]
+            activation = min(max(activation, 0), NNUE_ACTIVATION_SCALE)
+            total += activation * output[offset + hidden]
+    return total * NNUE_SCORE_SCALE // (NNUE_ACTIVATION_SCALE * NNUE_OUTPUT_SCALE)
 
 
 def _encode_bitboards(board: chess.Board, destination: NDArray[np.uint64]) -> None:
@@ -247,6 +298,7 @@ def evaluate(
     board: chess.Board,
     pawn_score: int | None = None,
     bitboards: NDArray[np.uint64] | None = None,
+    use_residual: bool = True,
 ) -> int:
     """Tapered material, placement, pawn, bishop-pair, and rook-file evaluation."""
     buffer = np.empty(12, dtype=np.uint64) if bitboards is None else bitboards
@@ -267,7 +319,22 @@ def evaluate(
             file_mask = chess.BB_FILES[chess.square_file(square)]
             if not pawns & file_mask:
                 score += sign * (17 if not enemies & file_mask else 9)
-    return score if board.turn == chess.WHITE else -score
+    relative_score = score if board.turn == chess.WHITE else -score
+    if use_residual:
+        white_king = board.king(chess.WHITE)
+        black_king = board.king(chess.BLACK)
+        if white_king is not None and black_king is not None:
+            residual = NNUE_OUTPUT_BIAS_CP + _compiled_nnue_residual(
+                buffer,
+                int(board.turn),
+                white_king,
+                black_king,
+                NNUE_EMBEDDING,
+                NNUE_HIDDEN_BIAS,
+                NNUE_OUTPUT,
+            )
+            relative_score += residual // NNUE_BLEND_DENOMINATOR
+    return relative_score
 
 
 class Engine:
@@ -686,3 +753,12 @@ def get_move(fen: str, time_left_ms: int) -> str:
 _warmup_bitboards = np.empty(12, dtype=np.uint64)
 _encode_bitboards(chess.Board(), _warmup_bitboards)
 _compiled_piece_score(_warmup_bitboards)
+_compiled_nnue_residual(
+    _warmup_bitboards,
+    1,
+    chess.E1,
+    chess.E8,
+    NNUE_EMBEDDING,
+    NNUE_HIDDEN_BIAS,
+    NNUE_OUTPUT,
+)

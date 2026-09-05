@@ -10,7 +10,7 @@ from tools.benchmark import POSITIONS
 
 class EvaluationTests(unittest.TestCase):
     def test_starting_position_is_symmetric(self) -> None:
-        self.assertEqual(evaluate(chess.Board()), 0)
+        self.assertEqual(evaluate(chess.Board(), use_residual=False), 0)
 
     def test_mirror_preserves_side_to_move_score(self) -> None:
         board = chess.Board("4k3/7p/8/3P4/8/8/P7/4K3 w - - 0 1")

@@ -53,7 +53,7 @@ def load_examples(path: Path) -> list[Example]:
         side = board.turn
         digest = hashlib.blake2b(record["fen"].encode(), digest_size=2).digest()
         validation = int.from_bytes(digest, "little") % 10 == 0
-        baseline = float(evaluate(board)) / SCORE_SCALE
+        baseline = float(evaluate(board, use_residual=False)) / SCORE_SCALE
         examples.append(
             Example(
                 halfkp_indices(board, side),
