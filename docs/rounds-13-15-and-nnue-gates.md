@@ -135,6 +135,29 @@ Inference and training now support variable hidden widths and phase-bucketed out
 these architecture experiments reproducible without locking the submission to an unproven model.
 The shipped weight file still has one 32-unit output head and therefore retains identical scoring.
 
+## Rapid seven-candidate search sweep
+
+A new teacher-position screen compared seven search variants on 100 held-out MultiPV positions at
+a small fixed clock before spending games. The incumbent scored 39% top-1 agreement, 64% top-3
+agreement, and 20.0 cp mean regret where its move appeared in the teacher's top three.
+
+- Reverse-futility margins of 70 and 120 cp per ply scored 38/64/20.6 and 40/66/16.4
+  (top-1 percentage/top-3 percentage/regret cp), respectively.
+- Safer and faster LMR variants scored 39/65/20.6 and 40/65/20.0.
+- Requiring depth four for null-move pruning scored 39/64/19.8.
+- Tightening quiescence SEE pruning to -80 cp scored 40/66/19.7.
+- Widening the aspiration window to 50 cp regressed to 38/62/21.0 and was eliminated immediately.
+
+The three screen leaders then played the same five reversed-color pairs against the incumbent:
+
+- The 120 cp reverse-futility margin scored +3 =4 -3 (50%).
+- The -80 cp quiescence SEE threshold scored +3 =3 -4 (45%).
+- Faster LMR scored +4 =1 -5 (45%).
+
+No candidate advanced. The result demonstrates that shallow teacher agreement is an efficient
+rejection filter, not a substitute for games. All 30 game-stage trials completed without an agent
+failure.
+
 ## Upper-strength stress test
 
 Against the local Stockfish 2700 configuration at the fast test clock, the promoted candidate
