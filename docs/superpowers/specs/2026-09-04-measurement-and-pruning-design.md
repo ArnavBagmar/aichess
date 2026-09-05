@@ -317,3 +317,22 @@ Fix: victim values and the delta margin in the net's units, rounded up, and the
 aspiration window at 250, about 1.3 pawns. Reverse futility's 120-per-ply margin was
 accepted as is and is left alone. Every later margin in this engine must be sized
 against `evaluate_cp`, not nominal centipawns.
+
+### Gates after the scale fix, and the net
+
+| change | opponent | score | LLR | verdict |
+| --- | --- | ---: | ---: | --- |
+| delta pruning + SEE, scaled, aspiration 250 (251b8c5) | f1003a9 | 55.0% | +1.33 | undecided, kept on score |
+| epoch-150 net | epoch-108 net, same code | 45.5% | -2.41 | **not adopted** |
+
+The epoch-150 net (all 150 epochs, final loss 0.00479 against 0.00483 at 108) is about
+30 Elo weaker in self-play than the epoch-108 export, over 200 games with one standard
+error of ±19. Training loss kept falling while playing strength fell, so the last 40
+epochs at a low learning rate fit the two binpacks rather than chess. The shipped net
+stays at epoch 108. A stronger net needs more data, not more epochs on the same data.
+
+### Shipped 2026-09-05 00:37
+
+`agent.zip` from commit 251b8c5 with the epoch-108 net: 7 files, 7.18 MB unzipped.
+Checked by 90 tests, ruff, mypy strict, a platform-style import from the extracted zip
+(2.1 s), moves within clock on three positions, and two clean harness games.
