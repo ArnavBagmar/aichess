@@ -40,6 +40,7 @@ ignore = ["N818"]
 strict = true
 files = [
     "agent.py",
+    "bitboard.py",
     "nnue_arch.py",
     "nnue_features.py",
     "nnue_net.py",
