@@ -212,4 +212,46 @@ somewhere, and the differential tests are the first place to look.
 
 ## Session context
 
-Filled in as tasks land: compile time, nps on the profile positions, gate results.
+### Rules update noted mid-build (2026-09-05)
+
+The organisers removed pondering: the process is now suspended while the opponent
+moves, so each side has the core to itself. The rules page read "120s plus 0.5s per
+move, per side, with a 90s init budget before the clock" when fetched during this
+session; the user reported the base time as 90 s. Nothing here depends on either
+number: the budget derives from the clock the platform hands us, and only 0.6 of the
+published increment is claimed. Pondering leaves the roadmap for good.
+
+### Tasks 1-4: what landed
+
+- Perft matches the six published positions to depth 3-4, and the generator agrees
+  with python-chess on every position of 200 random games (5,000+ positions).
+- Evaluation is bit-exact with `nnue_engine.Engine` on refresh, along 20 random games
+  of incremental updates, and across null moves.
+- All behavioural search tests pass on the kernel, including a deterministic
+  node-limited search, K+Q conversion without a threefold, and 40 random games with no
+  illegal move.
+
+### Task 5 measurements (this desktop, GPU trainer sharing the CPU)
+
+Speed on the phase 4 profile positions, `tools/nps.py`, budget ~2.25 s per position:
+
+| position | nodes | knps |
+| --- | ---: | ---: |
+| opening | 417,792 | 183.6 |
+| middlegame | 413,696 | 183.2 |
+| tactical | 425,984 | 188.2 |
+| endgame | 688,128 | 303.4 |
+| overall | 1,945,600 | 214.6 |
+
+Phase 5 measured 13.2 knps overall under the same load (22 knps unloaded): a factor of
+ten to fourteen, and at the same 4 s budget the search now sees about 900k nodes where
+it saw 90k.
+
+Import time: the first build took 44 s because numba compiled the search kernel three
+times, once per distinct literal argument at its call sites (`True`, `False` for the
+null-move flag; `-1` for the hash move). Deriving the flags from values and moving the
+null-move permission into a per-ply array brought a fresh `import agent` to 24.7 s
+(0.6 s Python, ~5 s bitboard kernels, ~3.4 s NNUE kernels, ~15.6 s the search kernel).
+`tests/test_import_time.py` bounds it at 45 s locally, half the platform's 90 s.
+Numba's optimisation level makes no difference (40-44 s at every level before the
+fix), so the cost is type inference and lowering, not LLVM.

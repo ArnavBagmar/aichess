@@ -11,6 +11,12 @@ MATE - ply; the table stores mates relative to the node and converts on probe.
 ctrl layout: [nodes, abort, root best move, node limit (0 = none), root hint move,
 generation, game key count, unused]. The kernel never raises: the clock sets ctrl[1]
 and every level unwinds on it.
+
+One numba habit shapes the call sites below: a literal argument (True, -1) makes numba
+compile a separate specialization of the callee, and this kernel took three compiles
+and 30 s at import that way. So flags are derived from values rather than written as
+literals, and whether a null move is allowed lives in a per-ply array instead of a
+boolean parameter.
 """
 
 import time
@@ -333,7 +339,6 @@ def search(
     ply: int,
     alpha: int,
     beta: int,
-    allow_null: bool,
     board: tuple[Any, ...],
     acc: tuple[Any, ...],
     net: tuple[Any, ...],
@@ -346,7 +351,7 @@ def search(
     pieces, occupied, mailbox, state, keys = board
     white_acc, black_acc, white_psqt, black_psqt, act, l1c, l1x, l2c, l2x = acc
     ft_w, ft_b, psqt_w, l1_w, l1_b, l2_w, l2_b, out_w, out_b = net
-    tt_keys, tt_data, killers, history, moves, scores, game_keys, gain = tables
+    tt_keys, tt_data, killers, history, moves, scores, game_keys, gain, null_flags = tables
 
     ctrl[CTRL_NODES] += 1
     if ctrl[CTRL_NODES] % CLOCK_CHECK_NODES == 0:
@@ -399,7 +404,7 @@ def search(
         best = -2 * MATE
         if in_check:
             # No stand-pat while in check: the position may be a forced mate.
-            count = generate_moves(pieces, occupied, mailbox, state, ply, moves, False)
+            count = generate_moves(pieces, occupied, mailbox, state, ply, moves, not in_check)
         else:
             static = evaluate(
                 ply, state, occupied, white_acc, black_acc, white_psqt, black_psqt,
@@ -410,9 +415,9 @@ def search(
             if static > alpha:
                 alpha = static
             best = static
-            count = generate_moves(pieces, occupied, mailbox, state, ply, moves, True)
+            count = generate_moves(pieces, occupied, mailbox, state, ply, moves, not in_check)
         score_moves(
-            mailbox_row, pieces_row, stm, occ, moves[ply], scores[ply], count, -1,
+            mailbox_row, pieces_row, stm, occ, moves[ply], scores[ply], count, hash_move,
             killers[ply], history, gain,
         )  # fmt: skip
         legal = 0
@@ -432,7 +437,7 @@ def search(
                 white_acc, black_acc, white_psqt, black_psqt,
             )  # fmt: skip
             score = -search(
-                depth - 1, ply + 1, -beta, -alpha, True, board, acc, net, tables, ctrl, deadline
+                depth - 1, ply + 1, -beta, -alpha, board, acc, net, tables, ctrl, deadline
             )
             if ctrl[CTRL_ABORT]:
                 return 0
@@ -458,7 +463,7 @@ def search(
 
     if (
         ply > 0
-        and allow_null
+        and null_flags[ply] == 0
         and depth >= NULL_MIN_DEPTH
         and not in_check
         and beta < MATE_THRESHOLD
@@ -466,10 +471,12 @@ def search(
     ):
         make_null(pieces, occupied, mailbox, state, keys, ply)
         copy_ply(ply, white_acc, black_acc, white_psqt, black_psqt)
+        null_flags[ply + 1] = 1  # the child may not pass straight back
         passed = -search(
-            depth - 1 - NULL_REDUCTION, ply + 1, -beta, -beta + 1, False,
+            depth - 1 - NULL_REDUCTION, ply + 1, -beta, -beta + 1,
             board, acc, net, tables, ctrl, deadline,
         )  # fmt: skip
+        null_flags[ply + 1] = 0
         if ctrl[CTRL_ABORT]:
             return 0
         if passed >= beta:
@@ -477,7 +484,7 @@ def search(
             # skipped a turn is not trustworthy enough to store as the real value.
             return beta
 
-    count = generate_moves(pieces, occupied, mailbox, state, ply, moves, False)
+    count = generate_moves(pieces, occupied, mailbox, state, ply, moves, depth < 0)
     score_moves(
         mailbox_row, pieces_row, stm, occ, moves[ply], scores[ply], count, hash_move,
         killers[ply], history, gain,
@@ -514,24 +521,22 @@ def search(
         ):
             reduction = 2 if (index >= LMR_LATE_MOVES and depth >= LMR_DEEP) else 1
         if index == 0:
-            score = -search(
-                child, ply + 1, -beta, -alpha, True, board, acc, net, tables, ctrl, deadline
-            )
+            score = -search(child, ply + 1, -beta, -alpha, board, acc, net, tables, ctrl, deadline)
         else:
             # Principal variation search: later moves first answer "better than alpha?"
             # with a null window; only a yes earns a full-window search.
             score = -search(
-                child - reduction, ply + 1, -alpha - 1, -alpha, True,
+                child - reduction, ply + 1, -alpha - 1, -alpha,
                 board, acc, net, tables, ctrl, deadline,
             )  # fmt: skip
             if reduction and score > alpha and not ctrl[CTRL_ABORT]:
                 score = -search(
-                    child, ply + 1, -alpha - 1, -alpha, True,
+                    child, ply + 1, -alpha - 1, -alpha,
                     board, acc, net, tables, ctrl, deadline,
                 )  # fmt: skip
             if alpha < score < beta and not ctrl[CTRL_ABORT]:
                 score = -search(
-                    child, ply + 1, -beta, -alpha, True, board, acc, net, tables, ctrl, deadline
+                    child, ply + 1, -beta, -alpha, board, acc, net, tables, ctrl, deadline
                 )
         if ctrl[CTRL_ABORT]:
             return 0
