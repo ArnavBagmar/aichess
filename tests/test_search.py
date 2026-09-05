@@ -38,6 +38,21 @@ def test_budget_stays_positive_on_a_nearly_dead_clock() -> None:
     assert search.budget_ms(1) >= search.MIN_BUDGET_MS
 
 
+def test_hard_budget_extends_the_soft_one_within_the_clock_share() -> None:
+    assert search.hard_budget_ms(120_000) > search.budget_ms(120_000)
+    assert search.hard_budget_ms(120_000) <= search.HARD_FACTOR * search.budget_ms(120_000)
+    assert search.hard_budget_ms(1_000) <= search.MAX_FRACTION * 1_000
+    assert search.hard_budget_ms(1) >= search.budget_ms(1)
+
+
+def test_instability_means_a_changed_move_or_a_falling_score() -> None:
+    assert not search.unstable(-1, 5, None, 100)
+    assert not search.unstable(5, 5, 100, 100)
+    assert search.unstable(5, 6, 100, 100)
+    assert search.unstable(5, 5, 100, 100 - search.SCORE_DROP - 1)
+    assert not search.unstable(5, 5, 100, 100 - search.SCORE_DROP + 1)
+
+
 def test_mate_scores_are_stored_relative_to_the_node() -> None:
     assert search.to_tt_score(sk.MATE - 5, 3) == sk.MATE - 2
     assert search.from_tt_score(sk.MATE - 2, 3) == sk.MATE - 5
