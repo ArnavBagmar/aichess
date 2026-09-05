@@ -193,6 +193,24 @@ The strict tactical tier therefore exceeds 80% even at the lower confidence boun
 is 77.7%. Deeper search materially reduces regret on ambiguous positions but does not materially
 change top-three agreement, indicating that evaluation/ranking is the next bottleneck.
 
+## Fresh official-clock Stockfish-2600 sample
+
+Five new color-reversed pairs were played from untouched positions at 120+0.5 against the local
+Stockfish `UCI_LimitStrength=2600` wrapper. The agent scored +3 =3 -4 (45%), or -35 unanchored Elo,
+with a pair-aware 95% interval of 35.2--54.8%. All ten games completed without a crash, flag,
+illegal move, or initialization failure.
+
+Combining this independently reported sample with the earlier 40 games gives +10 =16 -24 over 50
+games: 36.0%, -100 unanchored Elo, and a pair-aware 95% score interval of 27.0--45.0% (-173 to -35
+Elo). If the wrapper were perfectly calibrated at 2600, the point estimate would be about 2500;
+the wrapper is an internal reference and not a certified public rating.
+
+Stockfish analysis of the ten new PGNs found 32.1 cp competitive middlegame loss across 66 moves
+and 30.0 cp competitive endgame loss across 197 moves. There were four competitive middlegame
+mistakes above 100 cp, eleven competitive endgame mistakes above 100 cp, and eight mate-score
+swings in endgames. Endgame conversion and late tactical stability are therefore the clearest
+next targets.
+
 ## Upper-strength stress test
 
 Against the local Stockfish 2700 configuration at the fast test clock, the promoted candidate
