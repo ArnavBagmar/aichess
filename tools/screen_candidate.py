@@ -19,12 +19,26 @@ def main() -> None:
     parser.add_argument("--positions", type=int, default=100)
     parser.add_argument("--skip-positions", type=int, default=0)
     parser.add_argument("--clock-ms", type=int, default=1_000)
+    parser.add_argument(
+        "--min-gap-cp",
+        type=int,
+        default=0,
+        help="require this centipawn gap between the teacher's first and second moves",
+    )
     args = parser.parse_args()
 
     records = (
         json.loads(line) for line in args.dataset.read_text(encoding="utf-8").splitlines()
     )
-    selected = list(islice(records, args.skip_positions, args.skip_positions + args.positions))
+    eligible = (
+        record
+        for record in records
+        if len(record.get("candidates", ())) >= 2
+        and int(record["candidates"][0]["score_cp"])
+        - int(record["candidates"][1]["score_cp"])
+        >= args.min_gap_cp
+    )
+    selected = list(islice(eligible, args.skip_positions, args.skip_positions + args.positions))
     if not selected:
         raise SystemExit("no positions selected")
 
@@ -49,7 +63,8 @@ def main() -> None:
 
     count = len(selected)
     print(
-        f"positions={count} top1={top1 / count:.1%} top3={top3 / count:.1%} "
+        f"positions={count} min_gap_cp={args.min_gap_cp} "
+        f"top1={top1 / count:.1%} top3={top3 / count:.1%} "
         f"known_regret_cp={statistics.fmean(known_regrets) if known_regrets else float('nan'):.1f} "
         f"mean_depth={statistics.fmean(depths):.2f} mean_nodes={statistics.fmean(nodes):.0f}"
     )

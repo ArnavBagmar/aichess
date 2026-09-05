@@ -158,6 +158,23 @@ No candidate advanced. The result demonstrates that shallow teacher agreement is
 rejection filter, not a substitute for games. All 30 game-stage trials completed without an agent
 failure.
 
+## Margin-stratified tactical gates
+
+Raw top-move agreement mixes forced tactics with positions where several moves are effectively
+equivalent. The rapid screen now accepts `--min-gap-cp`, defined as the Stockfish MultiPV score gap
+between its first and second choices. On 100 held-out positions at the one-second-clock screen:
+
+- At a 50 cp minimum gap, the incumbent scored 73% top-1 and 91% top-3.
+- At a 100 cp minimum gap, it scored 84% top-1 and 93% top-3.
+- At a 150 cp minimum gap, it scored 89% top-1 and 97% top-3.
+
+This establishes an honest greater-than-80% metric for clear tactical decisions. It does not imply
+an 80% game score or 80% agreement on ambiguous positions. On a separate 100-position unfiltered
+sample, increasing the screen clock from 1,000 to 3,000 ms improved top-1 agreement from 35% to
+42%, top-3 from 65% to 71%, and known top-three regret from 22.0 to 17.4 cp. Future candidates
+should preserve at least 80% clear-tactic accuracy while improving ambiguous top-3 agreement and
+paired game score.
+
 ## Upper-strength stress test
 
 Against the local Stockfish 2700 configuration at the fast test clock, the promoted candidate
