@@ -15,7 +15,7 @@ first-rank lookup for ranks. No magic bitboards: no opaque constants, nothing to
 """
 
 from collections.abc import Callable
-from typing import Any, Final, cast
+from typing import Any, Final, NamedTuple, cast
 
 import chess
 import numpy as np
@@ -282,3 +282,413 @@ def move_to_uci(move: int) -> str:
 
 def piece_code(piece: chess.Piece) -> int:
     return piece.piece_type - 1 + (0 if piece.color == chess.WHITE else 6)
+
+
+# --- board stacks and FEN -----------------------------------------------------------------
+
+
+class BoardStacks(NamedTuple):
+    """One board per ply. Making a move writes ply + 1; unmaking is `ply -= 1`."""
+
+    pieces: npt.NDArray[np.uint64]  # [MAX_PLY, 12] one bitboard per piece code
+    occupied: npt.NDArray[np.uint64]  # [MAX_PLY, 3] white, black, both
+    mailbox: npt.NDArray[np.int8]  # [MAX_PLY, 64] piece code per square, EMPTY if none
+    state: npt.NDArray[np.int32]  # [MAX_PLY, STATE_SIZE]
+    keys: npt.NDArray[np.uint64]  # [MAX_PLY] zobrist key
+
+
+def new_stacks() -> BoardStacks:
+    return BoardStacks(
+        np.zeros((MAX_PLY, 12), dtype=np.uint64),
+        np.zeros((MAX_PLY, 3), dtype=np.uint64),
+        np.full((MAX_PLY, 64), EMPTY, dtype=np.int8),
+        np.zeros((MAX_PLY, STATE_SIZE), dtype=np.int32),
+        np.zeros(MAX_PLY, dtype=np.uint64),
+    )
+
+
+def set_from_board(board: chess.Board, stacks: BoardStacks, ply: int) -> None:
+    """Fill ply `ply` of the stacks from a python-chess board."""
+    pieces, occupied, mailbox, state, keys = stacks
+    pieces[ply, :] = 0
+    mailbox[ply, :] = EMPTY
+    for sq, piece in board.piece_map().items():
+        code = piece_code(piece)
+        pieces[ply, code] |= np.uint64(1 << sq)
+        mailbox[ply, sq] = code
+    occupied[ply, WHITE] = np.uint64(board.occupied_co[chess.WHITE])
+    occupied[ply, BLACK] = np.uint64(board.occupied_co[chess.BLACK])
+    occupied[ply, 2] = np.uint64(board.occupied)
+    rights = board.clean_castling_rights()
+    castling = 0
+    if rights & chess.BB_H1:
+        castling |= CASTLE_WK
+    if rights & chess.BB_A1:
+        castling |= CASTLE_WQ
+    if rights & chess.BB_H8:
+        castling |= CASTLE_BK
+    if rights & chess.BB_A8:
+        castling |= CASTLE_BQ
+    white_king = board.king(chess.WHITE)
+    black_king = board.king(chess.BLACK)
+    if white_king is None or black_king is None:
+        raise ValueError("position has no king for one side")
+    state[ply, STM] = WHITE if board.turn == chess.WHITE else BLACK
+    state[ply, CASTLING] = castling
+    state[ply, EP] = board.ep_square if board.ep_square is not None else -1
+    state[ply, HALFMOVE] = board.halfmove_clock
+    state[ply, WKING] = white_king
+    state[ply, BKING] = black_king
+    keys[ply] = compute_key(pieces, state, ply)
+
+
+def to_board(stacks: BoardStacks, ply: int) -> chess.Board:
+    """A python-chess board for ply `ply`, for tests and debugging."""
+    board = chess.Board(None)
+    for sq in range(64):
+        code = int(stacks.mailbox[ply, sq])
+        if code != EMPTY:
+            colour = chess.WHITE if code < 6 else chess.BLACK
+            board.set_piece_at(sq, chess.Piece(code % 6 + 1, colour))
+    board.turn = chess.WHITE if stacks.state[ply, STM] == WHITE else chess.BLACK
+    castling = int(stacks.state[ply, CASTLING])
+    rights = 0
+    if castling & CASTLE_WK:
+        rights |= chess.BB_H1
+    if castling & CASTLE_WQ:
+        rights |= chess.BB_A1
+    if castling & CASTLE_BK:
+        rights |= chess.BB_H8
+    if castling & CASTLE_BQ:
+        rights |= chess.BB_A8
+    board.castling_rights = rights
+    ep = int(stacks.state[ply, EP])
+    board.ep_square = ep if ep >= 0 else None
+    board.halfmove_clock = int(stacks.state[ply, HALFMOVE])
+    return board
+
+
+@_jit
+def compute_key(
+    pieces: npt.NDArray[np.uint64], state: npt.NDArray[np.int32], ply: int
+) -> np.uint64:
+    key = ZERO
+    for code in range(12):
+        bbits = pieces[ply, code]
+        while bbits != ZERO:
+            sq = lsb(bbits)
+            bbits &= bbits - ONE
+            key ^= ZOBRIST_PIECE[code, sq]
+    key ^= ZOBRIST_CASTLE[state[ply, CASTLING]]
+    if state[ply, EP] >= 0:
+        key ^= ZOBRIST_EP[state[ply, EP] & 7]
+    if state[ply, STM] == BLACK:
+        key ^= ZOBRIST_SIDE
+    return np.uint64(key)
+
+
+# --- move generation ----------------------------------------------------------------------
+
+
+@_jit
+def _add_pawn_moves(
+    moves: npt.NDArray[np.int32],
+    ply: int,
+    n: int,
+    frm: int,
+    to: int,
+    flags: int,
+    promote: bool,
+    queen_only: bool,
+) -> int:
+    if promote:
+        moves[ply, n] = frm | (to << 6) | (QUEEN << 12) | (flags << 15)
+        n += 1
+        if not queen_only:
+            for piece in (KNIGHT, BISHOP, ROOK):
+                moves[ply, n] = frm | (to << 6) | (piece << 12) | (flags << 15)
+                n += 1
+    else:
+        moves[ply, n] = frm | (to << 6) | (flags << 15)
+        n += 1
+    return n
+
+
+@_jit
+def generate_moves(
+    pieces: npt.NDArray[np.uint64],
+    occupied: npt.NDArray[np.uint64],
+    mailbox: npt.NDArray[np.int8],
+    state: npt.NDArray[np.int32],
+    ply: int,
+    moves: npt.NDArray[np.int32],
+    tactical_only: bool,
+) -> int:
+    """Pseudo-legal moves for ply `ply` into moves[ply]; returns the count.
+
+    Legality (own king left in check) is decided by make_move. With tactical_only, only
+    captures and queen promotions are generated, which is what quiescence searches.
+    Castling checks the usual rule here: never out of, through or into check.
+    """
+    n = 0
+    stm = state[ply, STM]
+    own = occupied[ply, stm]
+    enemy = occupied[ply, stm ^ 1]
+    occ = occupied[ply, 2]
+    empty = ~occ
+    base = stm * 6
+    ep = state[ply, EP]
+    ep_bit = bit(ep) if ep >= 0 else ZERO
+
+    pawns = pieces[ply, base + PAWN]
+    if stm == WHITE:
+        last_rank = RANK_8
+        single = (pawns << np.uint64(8)) & empty
+        double = ((single & RANK_3) << np.uint64(8)) & empty
+        back = -8
+    else:
+        last_rank = RANK_1
+        single = (pawns >> np.uint64(8)) & empty
+        double = ((single & RANK_6) >> np.uint64(8)) & empty
+        back = 8
+
+    targets = single & last_rank if tactical_only else single
+    while targets != ZERO:
+        to = lsb(targets)
+        targets &= targets - ONE
+        promote = (bit(to) & last_rank) != ZERO
+        n = _add_pawn_moves(moves, ply, n, to + back, to, 0, promote, tactical_only)
+    if not tactical_only:
+        while double != ZERO:
+            to = lsb(double)
+            double &= double - ONE
+            moves[ply, n] = (to + 2 * back) | (to << 6) | (FLAG_DOUBLE << 15)
+            n += 1
+    remaining = pawns
+    while remaining != ZERO:
+        frm = lsb(remaining)
+        remaining &= remaining - ONE
+        attacks = PAWN_ATTACKS[stm, frm]
+        captures = attacks & enemy
+        while captures != ZERO:
+            to = lsb(captures)
+            captures &= captures - ONE
+            promote = (bit(to) & last_rank) != ZERO
+            n = _add_pawn_moves(moves, ply, n, frm, to, FLAG_CAPTURE, promote, tactical_only)
+        if attacks & ep_bit != ZERO:
+            moves[ply, n] = frm | (ep << 6) | ((FLAG_CAPTURE | FLAG_EP) << 15)
+            n += 1
+
+    for piece in range(KNIGHT, KING + 1):
+        bbits = pieces[ply, base + piece]
+        while bbits != ZERO:
+            frm = lsb(bbits)
+            bbits &= bbits - ONE
+            if piece == KNIGHT:
+                attacks = KNIGHT_ATTACKS[frm]
+            elif piece == BISHOP:
+                attacks = bishop_attacks(frm, occ)
+            elif piece == ROOK:
+                attacks = rook_attacks(frm, occ)
+            elif piece == QUEEN:
+                attacks = queen_attacks(frm, occ)
+            else:
+                attacks = KING_ATTACKS[frm]
+            attacks &= ~own
+            if tactical_only:
+                attacks &= enemy
+            while attacks != ZERO:
+                to = lsb(attacks)
+                attacks &= attacks - ONE
+                flags = FLAG_CAPTURE if (bit(to) & enemy) != ZERO else 0
+                moves[ply, n] = frm | (to << 6) | (flags << 15)
+                n += 1
+
+    if not tactical_only:
+        rights = state[ply, CASTLING]
+        if stm == WHITE:
+            king_sq, kingside, queenside, rooks = 4, CASTLE_WK, CASTLE_WQ, pieces[ply, WR]
+        else:
+            king_sq, kingside, queenside, rooks = 60, CASTLE_BK, CASTLE_BQ, pieces[ply, BR]
+        if rights & (kingside | queenside) and not is_attacked(pieces[ply], king_sq, stm ^ 1, occ):
+            if (
+                rights & kingside
+                and rooks & bit(king_sq + 3) != ZERO
+                and occ & (bit(king_sq + 1) | bit(king_sq + 2)) == ZERO
+                and not is_attacked(pieces[ply], king_sq + 1, stm ^ 1, occ)
+                and not is_attacked(pieces[ply], king_sq + 2, stm ^ 1, occ)
+            ):
+                moves[ply, n] = king_sq | ((king_sq + 2) << 6) | (FLAG_CASTLE << 15)
+                n += 1
+            if (
+                rights & queenside
+                and rooks & bit(king_sq - 4) != ZERO
+                and occ & (bit(king_sq - 1) | bit(king_sq - 2) | bit(king_sq - 3)) == ZERO
+                and not is_attacked(pieces[ply], king_sq - 1, stm ^ 1, occ)
+                and not is_attacked(pieces[ply], king_sq - 2, stm ^ 1, occ)
+            ):
+                moves[ply, n] = king_sq | ((king_sq - 2) << 6) | (FLAG_CASTLE << 15)
+                n += 1
+    return n
+
+
+# --- make ---------------------------------------------------------------------------------
+
+
+@_jit
+def _copy_ply(
+    pieces: npt.NDArray[np.uint64],
+    occupied: npt.NDArray[np.uint64],
+    mailbox: npt.NDArray[np.int8],
+    state: npt.NDArray[np.int32],
+    ply: int,
+) -> None:
+    nxt = ply + 1
+    for i in range(12):
+        pieces[nxt, i] = pieces[ply, i]
+    for i in range(3):
+        occupied[nxt, i] = occupied[ply, i]
+    for i in range(64):
+        mailbox[nxt, i] = mailbox[ply, i]
+    for i in range(STATE_SIZE):
+        state[nxt, i] = state[ply, i]
+
+
+@_jit
+def _remove_piece(
+    pieces: npt.NDArray[np.uint64], mailbox: npt.NDArray[np.int8], ply: int, sq: int, code: int
+) -> np.uint64:
+    pieces[ply, code] &= ~bit(sq)
+    mailbox[ply, sq] = EMPTY
+    return np.uint64(ZOBRIST_PIECE[code, sq])
+
+
+@_jit
+def _put_piece(
+    pieces: npt.NDArray[np.uint64], mailbox: npt.NDArray[np.int8], ply: int, sq: int, code: int
+) -> np.uint64:
+    pieces[ply, code] |= bit(sq)
+    mailbox[ply, sq] = code
+    return np.uint64(ZOBRIST_PIECE[code, sq])
+
+
+@_jit
+def make_move(
+    pieces: npt.NDArray[np.uint64],
+    occupied: npt.NDArray[np.uint64],
+    mailbox: npt.NDArray[np.int8],
+    state: npt.NDArray[np.int32],
+    keys: npt.NDArray[np.uint64],
+    ply: int,
+    move: int,
+) -> bool:
+    """Write ply + 1 as the position after `move`.
+
+    Returns False if the move leaves the mover's king in check; ply + 1 is then garbage
+    and must not be entered.
+    """
+    _copy_ply(pieces, occupied, mailbox, state, ply)
+    nxt = ply + 1
+    stm = state[ply, STM]
+    frm = move & 63
+    to = (move >> 6) & 63
+    promotion = (move >> 12) & 7
+    flags = move >> 15
+    mover = mailbox[ply, frm]
+    key = keys[ply]
+
+    key ^= _remove_piece(pieces, mailbox, nxt, frm, mover)
+    if flags & FLAG_EP:
+        captured_sq = to - 8 if stm == WHITE else to + 8
+        key ^= _remove_piece(pieces, mailbox, nxt, captured_sq, mailbox[ply, captured_sq])
+    elif flags & FLAG_CAPTURE:
+        key ^= _remove_piece(pieces, mailbox, nxt, to, mailbox[ply, to])
+    landed = mover if promotion == 0 else promotion + stm * 6
+    key ^= _put_piece(pieces, mailbox, nxt, to, landed)
+    if flags & FLAG_CASTLE:
+        rook = ROOK + stm * 6
+        if to > frm:
+            key ^= _remove_piece(pieces, mailbox, nxt, frm + 3, rook)
+            key ^= _put_piece(pieces, mailbox, nxt, frm + 1, rook)
+        else:
+            key ^= _remove_piece(pieces, mailbox, nxt, frm - 4, rook)
+            key ^= _put_piece(pieces, mailbox, nxt, frm - 1, rook)
+
+    old_rights = state[ply, CASTLING]
+    new_rights = old_rights & CASTLE_MASK[frm] & CASTLE_MASK[to]
+    if new_rights != old_rights:
+        key ^= ZOBRIST_CASTLE[old_rights] ^ ZOBRIST_CASTLE[new_rights]
+    state[nxt, CASTLING] = new_rights
+
+    if state[ply, EP] >= 0:
+        key ^= ZOBRIST_EP[state[ply, EP] & 7]
+    if flags & FLAG_DOUBLE:
+        ep_sq = (frm + to) >> 1
+        state[nxt, EP] = ep_sq
+        key ^= ZOBRIST_EP[ep_sq & 7]
+    else:
+        state[nxt, EP] = -1
+
+    if mover % 6 == PAWN or flags & FLAG_CAPTURE:
+        state[nxt, HALFMOVE] = 0
+    else:
+        state[nxt, HALFMOVE] = state[ply, HALFMOVE] + 1
+    if mover % 6 == KING:
+        state[nxt, WKING + stm] = to
+    state[nxt, STM] = stm ^ 1
+    key ^= ZOBRIST_SIDE
+    keys[nxt] = key
+
+    white = ZERO
+    for code in range(6):
+        white |= pieces[nxt, code]
+    black = ZERO
+    for code in range(6, 12):
+        black |= pieces[nxt, code]
+    occupied[nxt, WHITE] = white
+    occupied[nxt, BLACK] = black
+    occupied[nxt, 2] = white | black
+    return not is_attacked(pieces[nxt], state[nxt, WKING + stm], stm ^ 1, white | black)
+
+
+@_jit
+def make_null(
+    pieces: npt.NDArray[np.uint64],
+    occupied: npt.NDArray[np.uint64],
+    mailbox: npt.NDArray[np.int8],
+    state: npt.NDArray[np.int32],
+    keys: npt.NDArray[np.uint64],
+    ply: int,
+) -> None:
+    """Pass the turn into ply + 1."""
+    _copy_ply(pieces, occupied, mailbox, state, ply)
+    nxt = ply + 1
+    key = keys[ply]
+    if state[ply, EP] >= 0:
+        key ^= ZOBRIST_EP[state[ply, EP] & 7]
+    state[nxt, EP] = -1
+    state[nxt, HALFMOVE] = state[ply, HALFMOVE] + 1
+    state[nxt, STM] = state[ply, STM] ^ 1
+    keys[nxt] = key ^ ZOBRIST_SIDE
+
+
+@_jit
+def perft(
+    pieces: npt.NDArray[np.uint64],
+    occupied: npt.NDArray[np.uint64],
+    mailbox: npt.NDArray[np.int8],
+    state: npt.NDArray[np.int32],
+    keys: npt.NDArray[np.uint64],
+    ply: int,
+    depth: int,
+    moves: npt.NDArray[np.int32],
+) -> int:
+    """Leaf count at `depth`, the standard move generator test."""
+    if depth == 0:
+        return 1
+    count = generate_moves(pieces, occupied, mailbox, state, ply, moves, False)
+    total = 0
+    for i in range(count):
+        if make_move(pieces, occupied, mailbox, state, keys, ply, moves[ply, i]):
+            total += perft(pieces, occupied, mailbox, state, keys, ply + 1, depth - 1, moves)
+    return total
