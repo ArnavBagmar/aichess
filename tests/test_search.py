@@ -356,8 +356,8 @@ def test_is_draw_accepts_a_precomputed_key() -> None:
 
 
 def test_delta_pruning_skips_captures_that_cannot_reach_alpha() -> None:
-    pawn = search.PIECE_CP[chess.PAWN] * 32
-    queen = search.PIECE_CP[chess.QUEEN] * 32
+    pawn = search.VICTIM_VALUE[chess.PAWN] * 32
+    queen = search.VICTIM_VALUE[chess.QUEEN] * 32
     alpha = 1000 * 32
     assert search.delta_pruned(static=0, victim=chess.PAWN, alpha=alpha)
     assert not search.delta_pruned(static=0, victim=chess.QUEEN, alpha=alpha)

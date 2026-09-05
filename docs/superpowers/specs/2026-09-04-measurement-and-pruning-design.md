@@ -292,3 +292,28 @@ No failures: every loss was over the board. This is the number the `UCI_Elo` lad
 hiding. Stockfish at 4k nodes is a few milliseconds of its search and still 600 Elo
 clear of a 22 knps Python engine at depth 5-7. The 4k rung is kept for comparability,
 and the close-out adds a 1k rung, where the score can actually move.
+
+### The net's scale is not centipawns, found by the delta-pruning gate
+
+Gate results before the fix, self-play at 10 s + 0.5 s, 200-game ceiling:
+
+| change | score | LLR | verdict |
+| --- | ---: | ---: | --- |
+| PVS | 51.5% | +0.02 | undecided |
+| aspiration windows (±50 "cp") | 50.2% | -0.39 | undecided |
+| check extensions | 52.2% | +0.26 | undecided |
+| reverse futility pruning | 62.8% | +3.27 | **accept** |
+| delta pruning (textbook values) | 23% at 26 games | -1.39 | collapsing |
+
+Delta pruning losing three games in four was too large for a tuning problem, and the
+cause is the evaluation's scale. `Engine.evaluate_cp` on material imbalances from the
+start position: pawn 185, knight 1664, rook 1882, queen 3256, K+Q vs K 5183. The
+textbook victim values (knight 300) with a 200 margin pruned knight captures as
+hopeless, so quiescence went blind. The same scale explains the ±50 aspiration window
+measuring neutral: it is a quarter of a pawn wide on this net and fails almost every
+iteration.
+
+Fix: victim values and the delta margin in the net's units, rounded up, and the
+aspiration window at 250, about 1.3 pawns. Reverse futility's 120-per-ply margin was
+accepted as is and is left alone. Every later margin in this engine must be sized
+against `evaluate_cp`, not nominal centipawns.

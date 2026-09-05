@@ -81,10 +81,16 @@ LMR_MIN_MOVES: Final = 4
 LMR_LATE_MOVES: Final = 8
 LMR_DEEP: Final = 6
 
+# The net does not score in nominal centipawns. Measured with Engine.evaluate_cp on
+# material imbalances from the start position: a pawn is ~185, a knight ~1660, a rook
+# ~1880, a queen ~3260, and K+Q vs K ~5180. Every margin below is sized to that scale;
+# the first delta-pruning attempt used textbook values and pruned knight captures as
+# hopeless, which lost 77% of its self-play games.
+
 # Aspiration windows. From ASPIRATION_MIN_DEPTH on, the root searches a narrow window
 # around the previous iteration's score; a fail outside it widens that side and retries.
 ASPIRATION_MIN_DEPTH: Final = 5
-ASPIRATION_WINDOW: Final = 50 * SCORE_PER_CP
+ASPIRATION_WINDOW: Final = 250 * SCORE_PER_CP  # about 1.3 pawns on the net's scale
 
 # Reverse futility pruning: near the leaves, a static evaluation comfortably above
 # beta is trusted without searching, since a few plies rarely overturn a big lead.
@@ -92,16 +98,17 @@ RFP_MAX_DEPTH: Final = 3
 RFP_MARGIN: Final = 120 * SCORE_PER_CP
 
 # Delta pruning: in quiescence, a capture that could not lift the static evaluation
-# to alpha even with this margin on top is not worth searching.
-PIECE_CP: Final = {
-    chess.PAWN: 100,
-    chess.KNIGHT: 300,
-    chess.BISHOP: 300,
-    chess.ROOK: 500,
-    chess.QUEEN: 900,
+# to alpha even with this margin on top is not worth searching. Victim values are the
+# net's, rounded up: pruning too little is the safe side of this rule.
+VICTIM_VALUE: Final = {
+    chess.PAWN: 200,
+    chess.KNIGHT: 1700,
+    chess.BISHOP: 1700,
+    chess.ROOK: 1900,
+    chess.QUEEN: 3300,
     chess.KING: 0,
 }
-DELTA_MARGIN: Final = 200 * SCORE_PER_CP
+DELTA_MARGIN: Final = 400 * SCORE_PER_CP
 
 # Transposition bound kinds.
 EXACT: Final = 0
@@ -173,7 +180,7 @@ def reverse_futility_cutoff(static: int, depth: int, beta: int, in_check: bool) 
 
 def delta_pruned(static: int, victim: chess.PieceType, alpha: int) -> bool:
     """Whether capturing `victim` is hopeless for raising the score to alpha."""
-    return static + PIECE_CP[victim] * SCORE_PER_CP + DELTA_MARGIN < alpha
+    return static + VICTIM_VALUE[victim] * SCORE_PER_CP + DELTA_MARGIN < alpha
 
 
 def _least_valuable_attacker(
