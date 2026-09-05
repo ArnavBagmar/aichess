@@ -255,3 +255,34 @@ null-move permission into a per-ply array brought a fresh `import agent` to 24.7
 `tests/test_import_time.py` bounds it at 45 s locally, half the platform's 90 s.
 Numba's optimisation level makes no difference (40-44 s at every level before the
 fix), so the cost is type inference and lowering, not LLVM.
+
+### Task 6 gate
+
+`make gate` steps: ruff and mypy clean, two harness games against `baselines/random`
+won by checkmate. Self-play SPRT against `../aichessathon-net108`, a worktree at
+251b8c5 (the shipped code and net; 74a7d63 differs from it only in docs), at
+10 s + 0.5 s with 3 workers, sharing the machine with the net2 trainer:
+
+```
+20 games vs agent at ../aichessathon-net108: +18 =2 -0
+score 95.0%
+rating difference: +512 Elo (1 SE: +414 to +720)
+SPRT [0, 20]: accept, LLR +5.09 in [-2.94, 2.94]
+```
+
+Twenty games, no losses, no failures. At this clock the old engine reaches depth
+4-5 and the new one depth 8-9 from the same code and net; the score is what a
+ten-times faster search of the same algorithm should produce.
+
+The zip built by `harness.package` holds `agent.py bitboard.py nnue_arch.py
+nnue_bitboard.py nnue_features.py nnue_net.py search.py search_kernel.py
+weights/nnue.npz`, 7.21 MB unzipped. From an extracted copy in a fresh interpreter:
+import 26.1 s, a middlegame move at a 90 s clock in 3.3 s, an endgame move at a 2 s
+clock in 0.3 s.
+
+### Task 7
+
+`nnue_engine.py` is gone. `nnue_bitboard.evaluate_board(net, board)` is the one-off
+scoring helper that `tests/test_parity.py`, `tests/test_export.py`,
+`tools/verify_export.py` and the bench's opening balancer now use; the parity tests
+pin the kernels against `tests/reference.forward_int` directly.
