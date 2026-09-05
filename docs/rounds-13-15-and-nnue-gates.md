@@ -50,6 +50,29 @@ handcrafted evaluation, never a bundled third-party engine.
 The 50% blend passes the promotion gate; the full correction does not. This is a concrete example
 of why label MAE is subordinate to paired game results.
 
+## Forty-game official 2600 reference sample
+
+Five initial pairs and fifteen precommitted extension pairs were played at the official 120+0.5
+clock on forty distinct color assignments. The combined result was +7 =13 -20 (33.75%), or -117
+unanchored Elo relative to the local Stockfish 2600 configuration. The pair-aware 95% score
+interval was 22.9–44.6%, corresponding to -211 to -38 Elo. If the configured opponent were
+perfectly calibrated, that maps to a 2483 point estimate and approximately 2389–2562 interval.
+The local opponent uses Stockfish's UCI strength limiter and 100 ms per move, however, so this is
+an internal reference—not a certified public rating. There were no agent failures.
+
+Deeper fixed-budget analysis of 1,528 agent moves found competitive-position mean loss of 25.9 cp
+in the opening, 43.9 cp in the middlegame, and 30.5 cp in the endgame. This points to middlegame
+tactical horizon errors rather than opening selection as the largest immediate weakness.
+
+Two forcing-search experiments were rejected after paired testing:
+
+- PV-only quiet checks: pilot 55%, fresh confirmation 40%, combined 45% over 60 games.
+- PV mate-in-one leaf detection: pilot 52.5%, fresh confirmation 48.75%, combined exactly 50% over
+  60 games.
+
+Neither is shipped. This guards against pilot-selection bias and preserves the strongest measured
+version rather than accumulating plausible but unproven heuristics.
+
 ## Upper-strength stress test
 
 Against the local Stockfish 2700 configuration at the fast test clock, the promoted candidate
