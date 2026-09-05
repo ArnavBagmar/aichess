@@ -175,6 +175,24 @@ sample, increasing the screen clock from 1,000 to 3,000 ms improved top-1 agreem
 should preserve at least 80% clear-tactic accuracy while improving ambiguous top-3 agreement and
 paired game score.
 
+### Deeper confirmation samples
+
+Larger independent samples refined the initial estimates:
+
+- 500 unfiltered positions at the short screen scored 38.8% top-1 (95% Wilson interval
+  34.6--43.1%) and 64.8% top-3 (60.5--68.9%), with 24.1 cp known regret.
+- 300 unfiltered positions at the deeper screen scored 40.7% top-1 (35.3--46.3%) and 65.7%
+  top-3 (60.1--70.8%), with 16.2 cp known regret.
+- 233 positions with a teacher gap of at least 100 cp scored 77.7% top-1 (71.9--82.6%) and
+  88.0% top-3 (83.2--91.6%).
+- 215 positions with a teacher gap of at least 150 cp scored 86.5% top-1 (81.3--90.4%) and
+  94.4% top-3 (90.5--96.8%).
+
+The strict tactical tier therefore exceeds 80% even at the lower confidence bound. The earlier
+84% estimate for the 100 cp tier was optimistic sampling noise; its larger-sample point estimate
+is 77.7%. Deeper search materially reduces regret on ambiguous positions but does not materially
+change top-three agreement, indicating that evaluation/ranking is the next bottleneck.
+
 ## Upper-strength stress test
 
 Against the local Stockfish 2700 configuration at the fast test clock, the promoted candidate
