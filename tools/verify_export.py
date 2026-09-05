@@ -30,7 +30,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from nnue_arch import L1, NNUE2SCORE, SCORE_PER_CP  # noqa: E402
-from nnue_engine import Engine  # noqa: E402
+from nnue_bitboard import evaluate_board  # noqa: E402
 from nnue_features import active_features  # noqa: E402
 from nnue_net import load_network  # noqa: E402
 from tools.export_net import export  # noqa: E402
@@ -100,20 +100,21 @@ def main() -> None:
     export_path = REPO / "weights" / "_verify.npz"
     net = export(arguments.checkpoint)
     np.savez_compressed(export_path, **{f: getattr(net, f) for f in net.__dataclass_fields__})
-    engine = Engine(load_network(export_path))
+    net_loaded = load_network(export_path)
 
     boards = sample_boards(arguments.positions, seed=1)
     diffs = []
     for board in boards:
-        engine.set_position(board.fen())
         expected = trainer_forward(model, board)
-        diffs.append(abs(engine.evaluate() - expected))
+        diffs.append(abs(evaluate_board(net_loaded, board) - expected))
 
     diffs_arr = np.array(diffs)
     within_1cp = int((diffs_arr <= SCORE_PER_CP).sum())
     print(f"positions:      {len(boards)}")
-    print(f"max diff:       {diffs_arr.max():.1f} internal units "
-          f"({diffs_arr.max() / SCORE_PER_CP:.2f} cp)")
+    print(
+        f"max diff:       {diffs_arr.max():.1f} internal units "
+        f"({diffs_arr.max() / SCORE_PER_CP:.2f} cp)"
+    )
     print(f"mean diff:      {diffs_arr.mean():.2f} internal units")
     print(f"within 1 cp:    {within_1cp}/{len(boards)}")
     export_path.unlink(missing_ok=True)

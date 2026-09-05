@@ -1,9 +1,10 @@
 # Training and exporting the NNUE (Phase 2)
 
-The competition zip ships only `agent.py`, the `nnue_*.py` modules, and
-`weights/nnue.npz`. Training happens outside this repo, in a clone of
-`official-stockfish/nnue-pytorch`, and produces a checkpoint that
-`tools/export_net.py` converts into the `.npz` the agent loads. Nothing from the
+The competition zip ships only `agent.py`, the engine modules (`bitboard.py`,
+`nnue_*.py`, `search.py`, `search_kernel.py`) and `weights/nnue.npz`. Training
+happens outside this repo, in a clone of `official-stockfish/nnue-pytorch`, and
+produces a checkpoint that `tools/export_net.py` converts into the `.npz` the agent
+loads. Nothing from the
 trainer is shipped — only the weights we trained, which the rules allow.
 
 ## One-time setup (trainer workspace)

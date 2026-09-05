@@ -216,14 +216,17 @@ class Balancer:
     """Our own evaluation, used only to keep opening positions near-equal."""
 
     def __init__(self) -> None:
-        from nnue_engine import load_engine, warm_up
+        from nnue_arch import SCORE_PER_CP
+        from nnue_bitboard import evaluate_board
+        from nnue_net import load_network
+        from search import default_weights_path
 
-        self._engine = load_engine()
-        warm_up(self._engine)
+        self._net = load_network(default_weights_path())
+        self._evaluate = evaluate_board
+        self._per_cp = SCORE_PER_CP
 
     def __call__(self, fen: str) -> float:
-        self._engine.set_position(fen)
-        return self._engine.evaluate_cp()
+        return self._evaluate(self._net, chess.Board(fen)) / self._per_cp
 
 
 def opening_positions(count: int, seed: int, evaluate: Balancer) -> list[str]:
@@ -423,8 +426,7 @@ def main() -> None:
             pgn_games.append(outcome.pgn)
         done += 1
         line = (
-            f"pair {done}/{pairs}: +{tally.wins} ={tally.draws} -{tally.losses} "
-            f"({tally.score:.1%})"
+            f"pair {done}/{pairs}: +{tally.wins} ={tally.draws} -{tally.losses} ({tally.score:.1%})"
         )
         if sprt is None:
             print(line, flush=True)

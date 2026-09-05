@@ -1,14 +1,19 @@
 """HalfKAv2_hm features and accumulators over the bitboard stacks.
 
 The index formula is nnue_features.feature_index on piece codes instead of python-chess
-pieces; tests pin the two against each other. Accumulators keep the shapes and dtypes
-of nnue_engine so tests/reference.py still pins the arithmetic, and _forward is the
-same kernel moved here. A perspective whose own king moved is refreshed, as before.
+pieces; tests pin the two against each other. The accumulators are int16 rows per ply
+and perspective, the forward pass is the integer pipeline nnue_arch.py documents, and
+tests/reference.py pins the arithmetic bit for bit. A perspective whose own king moved
+is refreshed rather than updated, since the orientation and bucket change with it.
+
+evaluate_board is the Python-side convenience for one-off scoring (tests, tools); the
+search kernel calls the jitted pieces directly.
 """
 
 from collections.abc import Callable
 from typing import Any, NamedTuple, cast
 
+import chess
 import numpy as np
 import numpy.typing as npt
 from numba import njit
@@ -25,7 +30,9 @@ from bitboard import (
     STM,
     WHITE,
     WKING,
+    new_stacks,
     popcount,
+    set_from_board,
 )
 from nnue_arch import (
     FT_ACT_MAX,
@@ -45,6 +52,7 @@ from nnue_arch import (
     OUTPUT_MUL,
 )
 from nnue_features import KING_BUCKETS
+from nnue_net import NetworkWeights
 
 KING_BUCKET_TABLE = np.asarray(KING_BUCKETS, dtype=np.int64)
 
@@ -369,4 +377,45 @@ def evaluate(
         l1x,
         l2c,
         l2x,
+    )
+
+
+def evaluate_board(net: NetworkWeights, board: chess.Board) -> int:
+    """Score of `board` for the side to move, in 1/32 cp, from a fresh refresh."""
+    stacks = new_stacks()
+    acc = new_acc_stacks()
+    set_from_board(board, stacks, 0)
+    refresh_ply(
+        net.ft_w,
+        net.ft_b,
+        net.psqt_w,
+        stacks.mailbox,
+        stacks.state,
+        0,
+        acc.white_acc,
+        acc.black_acc,
+        acc.white_psqt,
+        acc.black_psqt,
+    )
+    return int(
+        evaluate(
+            0,
+            stacks.state,
+            stacks.occupied,
+            acc.white_acc,
+            acc.black_acc,
+            acc.white_psqt,
+            acc.black_psqt,
+            acc.act,
+            acc.l1c,
+            acc.l1x,
+            acc.l2c,
+            acc.l2x,
+            net.l1_w,
+            net.l1_b,
+            net.l2_w,
+            net.l2_b,
+            net.out_w,
+            net.out_b,
+        )
     )

@@ -1,4 +1,4 @@
-"""The bitboard NNUE must equal the python-chess engine exactly, position by position."""
+"""The bitboard NNUE against the numpy reference, position by position and move by move."""
 
 import random
 
@@ -7,8 +7,8 @@ import numpy as np
 
 import bitboard as bb
 import nnue_bitboard as nb
-from nnue_engine import Engine
 from nnue_features import active_features
+from tests.reference import forward_int
 from tools.gen_random_net import random_network
 
 _NET = random_network(2026)
@@ -73,8 +73,7 @@ def refresh(stacks: bb.BoardStacks, acc: nb.AccStacks, ply: int) -> None:
     )
 
 
-def test_refresh_matches_engine_on_random_positions() -> None:
-    engine = Engine(_NET)
+def test_refresh_matches_reference_on_random_positions() -> None:
     rng = random.Random(6)
     stacks = bb.new_stacks()
     acc = nb.new_acc_stacks()
@@ -84,19 +83,17 @@ def test_refresh_matches_engine_on_random_positions() -> None:
         if not moves:
             break
         board.push(rng.choice(moves))
-        engine.set_position(board.fen())
         bb.set_from_board(board, stacks, 0)
         refresh(stacks, acc, 0)
-        assert evaluate(stacks, acc, 0) == engine.evaluate(), board.fen()
+        assert evaluate(stacks, acc, 0) == forward_int(_NET, board), board.fen()
+        assert nb.evaluate_board(_NET, board) == forward_int(_NET, board), board.fen()
 
 
-def test_incremental_updates_match_engine_along_games() -> None:
-    engine = Engine(_NET)
+def test_incremental_updates_match_reference_along_games() -> None:
     rng = random.Random(7)
     moves = np.zeros((bb.MAX_PLY, bb.MAX_MOVES), dtype=np.int32)
     for _game in range(20):
         board = chess.Board()
-        engine.set_position(board.fen())
         stacks = bb.new_stacks()
         acc = nb.new_acc_stacks()
         bb.set_from_board(board, stacks, 0)
@@ -132,9 +129,8 @@ def test_incremental_updates_match_engine_along_games() -> None:
                 acc.white_psqt,
                 acc.black_psqt,
             )
-            engine.push(move)
             board.push(move)
-            assert evaluate(stacks, acc, ply + 1) == engine.evaluate(), board.fen()
+            assert evaluate(stacks, acc, ply + 1) == forward_int(_NET, board), board.fen()
 
 
 def test_null_move_copy_keeps_the_evaluation() -> None:
@@ -145,7 +141,5 @@ def test_null_move_copy_keeps_the_evaluation() -> None:
     refresh(stacks, acc, 0)
     bb.make_null(stacks.pieces, stacks.occupied, stacks.mailbox, stacks.state, stacks.keys, 0)
     nb.copy_ply(0, acc.white_acc, acc.black_acc, acc.white_psqt, acc.black_psqt)
-    engine = Engine(_NET)
-    engine.set_position(board.fen())
-    engine.push_null()
-    assert evaluate(stacks, acc, 1) == engine.evaluate()
+    board.push(chess.Move.null())
+    assert evaluate(stacks, acc, 1) == forward_int(_NET, board)

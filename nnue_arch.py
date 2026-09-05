@@ -3,7 +3,7 @@
 The network is the nnue-pytorch master architecture restricted to the HalfKAv2_hm feature
 set, sized down to L1=256. Everything here is a faithful transcription of the trainer's
 defaults (model/quantize.py and model/modules/config.py in official-stockfish/nnue-pytorch);
-the exporter in tools/ and the inference in nnue_engine.py must agree on these numbers, so
+the exporter in tools/ and the inference in nnue_bitboard.py must agree on these numbers, so
 they live in one place.
 
 Integer pipeline, derived from the trainer's fake-quantization with its default config

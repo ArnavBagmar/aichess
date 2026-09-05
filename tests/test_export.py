@@ -106,10 +106,8 @@ def test_l2_and_output_shapes_and_scales(exported: Exported) -> None:
 def test_exported_net_loads_and_evaluates(exported: Exported) -> None:
     import chess
 
-    from nnue_engine import Engine
+    from nnue_bitboard import evaluate_board
 
     net, _ = exported
-    engine = Engine(net)
-    engine.set_position(chess.STARTING_FEN)
-    score = engine.evaluate()
+    score = evaluate_board(net, chess.Board())
     assert isinstance(score, int)

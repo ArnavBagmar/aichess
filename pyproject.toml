@@ -47,7 +47,6 @@ files = [
     "nnue_arch.py",
     "nnue_features.py",
     "nnue_net.py",
-    "nnue_engine.py",
     "harness",
     "tools",
     "tests",
