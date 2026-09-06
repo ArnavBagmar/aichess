@@ -20,6 +20,7 @@ class TrainingPipelineTests(unittest.TestCase):
             teacher_residual=1.0,
             baseline=0.0,
             validation=True,
+            phase=0,
             phase_bucket=0,
         )
         embedding = np.empty((0, 1), dtype=np.float32)

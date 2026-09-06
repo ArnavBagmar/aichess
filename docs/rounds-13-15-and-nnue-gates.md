@@ -224,3 +224,22 @@ The competition documentation checked on 4 September permits team-trained model 
 unrestricted training data, including third-party-engine annotations. The submission contains
 only readable team code and the team-trained weight file. It contains no Stockfish executable,
 wrapper, network access, subprocess engine call, opening leak, or hidden match information.
+
+## Endgame-target experiments after the 2600 sample
+
+Three narrowly scoped follow-ups were gated against the frozen incumbent:
+
+- Adding quiet checks to the first two quiescence plies only in low-material positions was
+  rejected at the runtime gate. Affected endgame throughput fell from roughly 30k to 20k nodes
+  per second and representative positions lost one or two completed plies.
+- A three-bucket model with the proven HalfKP feature transformer frozen and only its low-phase
+  output head retrained reduced held-out residual error slightly. It scored +7 =6 -7 over 20
+  paired fast games (50.0%, pair-aware 95% interval 42.7--57.3%) and was not promoted.
+- Generational transposition-table retention scored +8 =3 -9 over 20 paired fast games (47.5%,
+  pair-aware 95% interval 28.9--66.1%) and was not promoted. The short-clock test also did not
+  establish that table-capacity events were frequent enough to isolate the mechanism.
+
+The training utility now supports initializing from an existing float model, freezing its shared
+feature transformer, and filtering by exact material phase. This makes future phase-head studies
+cheap while preserving the incumbent representation. None of these experiments changed the
+submitted engine or its weights.

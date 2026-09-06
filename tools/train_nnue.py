@@ -28,6 +28,7 @@ class Example:
     teacher_residual: float
     baseline: float
     validation: bool
+    phase: int
     phase_bucket: int
 
 
@@ -87,6 +88,7 @@ def load_examples(
                 teacher_residual,
                 baseline,
                 validation,
+                phase,
                 phase_bucket,
             )
         )
@@ -140,6 +142,21 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("weights/nnue.npz"))
     parser.add_argument("--hidden", type=int, default=32)
     parser.add_argument("--phase-buckets", type=int, default=1)
+    parser.add_argument(
+        "--initialize-from",
+        type=Path,
+        help="initialize float weights from an existing model",
+    )
+    parser.add_argument(
+        "--freeze-hidden",
+        action="store_true",
+        help="train only phase-specific output heads and keep the shared feature transformer fixed",
+    )
+    parser.add_argument(
+        "--max-phase",
+        type=int,
+        help="train only examples whose Stockfish phase value is at most this value",
+    )
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--learning-rate", type=float, default=0.002)
     parser.add_argument("--seed", type=int, default=20260904)
@@ -167,16 +184,39 @@ def main() -> None:
         split_by_game=args.split_by == "game",
         phase_buckets=args.phase_buckets,
     )
+    if args.max_phase is not None:
+        if not 0 <= args.max_phase <= 24:
+            raise SystemExit("max phase must be between 0 and 24")
+        examples = [example for example in examples if example.phase <= args.max_phase]
     train = [example for example in examples if not example.validation]
     validation = [example for example in examples if example.validation]
     if not train or not validation:
         raise SystemExit("dataset must produce non-empty train and validation splits")
 
     rng = np.random.default_rng(args.seed)
-    embedding = rng.normal(0.0, 0.01, (FEATURES, args.hidden)).astype(np.float32)
-    hidden_bias = np.full(args.hidden, 0.1, dtype=np.float32)
-    output = rng.normal(0.0, 0.02, args.hidden * 2 * args.phase_buckets).astype(np.float32)
-    output_bias = np.float32(0.0)
+    if args.initialize_from:
+        with np.load(args.initialize_from) as initial:
+            embedding = initial["embedding"].astype(np.float32)
+            hidden_bias = initial["hidden_bias"].astype(np.float32)
+            base_output = initial["output"].astype(np.float32).reshape(-1)
+            initial_buckets = base_output.size // (2 * hidden_bias.size)
+            if hidden_bias.size != args.hidden:
+                raise SystemExit("initialized hidden width does not match --hidden")
+            if initial_buckets == args.phase_buckets:
+                output = base_output.copy()
+            elif initial_buckets == 1:
+                output = np.tile(base_output, args.phase_buckets)
+            else:
+                raise SystemExit("initialized phase heads cannot be mapped to requested buckets")
+            bias_key = "output_bias" if "output_bias" in initial else "output_bias_cp"
+            output_bias = np.float32(initial[bias_key][0])
+            if bias_key == "output_bias_cp":
+                output_bias /= np.float32(SCORE_SCALE)
+    else:
+        embedding = rng.normal(0.0, 0.01, (FEATURES, args.hidden)).astype(np.float32)
+        hidden_bias = np.full(args.hidden, 0.1, dtype=np.float32)
+        output = rng.normal(0.0, 0.02, args.hidden * 2 * args.phase_buckets).astype(np.float32)
+        output_bias = np.float32(0.0)
     best_mae = math.inf
     best: (
         tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32], np.float32]
@@ -197,16 +237,18 @@ def main() -> None:
             offset = example.phase_bucket * args.hidden * 2
             output[offset : offset + args.hidden] -= rate * error * us
             output[offset + args.hidden : offset + 2 * args.hidden] -= rate * error * them
-            output_bias -= rate * error
+            if not args.freeze_hidden:
+                output_bias -= rate * error
             us_gradient = error * old_output[offset : offset + args.hidden]
             them_gradient = error * old_output[
                 offset + args.hidden : offset + 2 * args.hidden
             ]
             us_active = (us > 0.0) & (us < 1.0)
             them_active = (them > 0.0) & (them < 1.0)
-            embedding[example.us] -= rate * us_gradient * us_active
-            embedding[example.them] -= rate * them_gradient * them_active
-            hidden_bias -= rate * (us_gradient * us_active + them_gradient * them_active)
+            if not args.freeze_hidden:
+                embedding[example.us] -= rate * us_gradient * us_active
+                embedding[example.them] -= rate * them_gradient * them_active
+                hidden_bias -= rate * (us_gradient * us_active + them_gradient * them_active)
 
         mae, rmse, baseline_mae = metrics(
             embedding,
