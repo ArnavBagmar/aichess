@@ -31,6 +31,7 @@ class UciTeacher:
         self.stdin = cast(TextIO, self.process.stdin)
         self.stdout = cast(TextIO, self.process.stdout)
         self.name = "unknown UCI teacher"
+        self.multipv = multipv
         self._send("uci")
         for line in self.stdout:
             if line.startswith("id name "):
@@ -56,8 +57,12 @@ class UciTeacher:
         raise RuntimeError(f"teacher exited before {token}")
 
     def analyze(
-        self, board: chess.Board, depth: int
+        self, board: chess.Board, depth: int, multipv: int | None = None
     ) -> tuple[int, str, int, list[Candidate]]:
+        requested_multipv = multipv or self.multipv
+        if requested_multipv != self.multipv:
+            self._send(f"setoption name MultiPV value {requested_multipv}")
+            self.multipv = requested_multipv
         self._send(f"position fen {board.fen()}")
         self._send(f"go depth {depth}")
         score = 0
@@ -129,6 +134,11 @@ def main() -> None:
     parser.add_argument("--max-abs-score", type=int, default=1_000)
     parser.add_argument("--multipv", type=int, default=3)
     parser.add_argument(
+        "--all-legal-moves",
+        action="store_true",
+        help="request one principal variation for every legal root move",
+    )
+    parser.add_argument(
         "--max-best-gap",
         type=int,
         help="retain only positions whose best/second-best MultiPV gap is at most this many cp",
@@ -145,8 +155,7 @@ def main() -> None:
     input_records: list[dict[str, object]] = []
     if args.input_jsonl:
         input_records = [
-            json.loads(line)
-            for line in args.input_jsonl.read_text(encoding="utf-8").splitlines()
+            json.loads(line) for line in args.input_jsonl.read_text(encoding="utf-8").splitlines()
         ]
         rng.shuffle(input_records)
     input_index = 0
@@ -190,8 +199,15 @@ def main() -> None:
             if key in seen:
                 continue
             seen.add(key)
-            score, bestmove, nodes, candidates = teacher.analyze(board, args.depth)
+            requested_multipv = len(list(board.legal_moves)) if args.all_legal_moves else None
+            score, bestmove, nodes, candidates = teacher.analyze(
+                board, args.depth, requested_multipv
+            )
             attempted += 1
+            if args.all_legal_moves and len(candidates) != requested_multipv:
+                raise RuntimeError(
+                    f"teacher returned {len(candidates)} of {requested_multipv} legal moves"
+                )
             if abs(score) > args.max_abs_score:
                 continue
             if args.max_best_gap is not None and (
@@ -227,12 +243,11 @@ def main() -> None:
         "teacher_calls": attempted,
         "max_abs_score": args.max_abs_score,
         "multipv": args.multipv,
+        "all_legal_moves": args.all_legal_moves,
         "max_best_gap": args.max_best_gap,
         "input": args.input_jsonl.name if args.input_jsonl else "synthetic-random-play",
         "input_sha256": (
-            hashlib.sha256(args.input_jsonl.read_bytes()).hexdigest()
-            if args.input_jsonl
-            else None
+            hashlib.sha256(args.input_jsonl.read_bytes()).hexdigest() if args.input_jsonl else None
         ),
         "sha256": digest.hexdigest(),
     }

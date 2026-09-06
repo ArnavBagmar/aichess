@@ -7,6 +7,7 @@ import numpy as np
 
 from tools.label_positions import random_position
 from tools.train_evaluator import FEATURES, features
+from tools.train_move_policy import POLICY_FEATURES, move_features
 from tools.train_nnue import FEATURES as NNUE_FEATURES
 from tools.train_nnue import Example, halfkp_indices, metrics
 from tools.train_ranked_nnue import game_target, sigmoid
@@ -74,6 +75,17 @@ class TrainingPipelineTests(unittest.TestCase):
         self.assertEqual(first.fen(), second.fen())
         self.assertTrue(first.is_valid())
         self.assertFalse(first.is_game_over())
+
+    def test_move_policy_features_cover_all_legal_move_types(self) -> None:
+        board = chess.Board("4k3/P6p/8/3pP3/8/8/7P/4K3 w - d6 0 1")
+        moves = list(board.legal_moves)
+        encoded = [move_features(board, move) for move in moves]
+        self.assertTrue(encoded)
+        self.assertTrue(all(len(features) == 12 for features in encoded))
+        self.assertTrue(
+            all(0 <= index < POLICY_FEATURES for features in encoded for index in features)
+        )
+        self.assertEqual(encoded, [move_features(board, move) for move in moves])
 
 
 if __name__ == "__main__":

@@ -25,6 +25,10 @@ python -m tools.label_positions `
   --positions 100000 --depth 10 --max-abs-score 1000 --multipv 3
 ```
 
+For move-policy work, `--all-legal-moves` dynamically sets MultiPV to the exact legal root-move
+count and verifies that every move received a score. This is an offline-only, high-cost labeling
+mode; the teacher executable is never packaged.
+
 The generator uses one teacher thread, fixed-seed legal randomized games, score filtering, and
 records several teacher-ranked legal moves plus their scores. It writes a SHA-256 provenance
 manifest. The JSONL dataset and its machine-specific manifest are
@@ -112,3 +116,22 @@ The result establishes a useful lower bound: a move-ordering classifier near 56%
 is not strong enough to interact safely with this engine's LMR and pruning. Future policy work
 should require materially higher held-out accuracy, include negative examples beyond teacher top-3,
 and be evaluated on node reduction at equal completed score/depth before any games.
+
+### Complete-legal-move policy follow-up (2026-09-05)
+
+The labeler produced 5,000 realistic, close-choice positions at Stockfish 18 depth 8, scoring every
+legal root move. It accepted 5,000 of 5,533 unique positions under a 200 cp best/second-best filter;
+the dataset SHA-256 is
+`7d0d28f35638c61cdea85c0c8e9b8fafdce07be5edf4c7ed50f5dc7536a8a56e`.
+
+The second policy uses a 65,536-entry hashed linear model with twelve active features per move:
+phase, piece/source/destination interactions, move geometry, captures, promotions, checks, and
+destination attack/defense context. Game-disjoint validation on 527 positions reached a best 66.9%
+broad pairwise accuracy, but only 57.3% on move pairs separated by at most 100 cp. Top-1 agreement
+remained 19% or lower and mean selected-move regret remained roughly 141--145 cp.
+
+This candidate was rejected before runtime or games. The broad 65% threshold alone is too easy to
+satisfy with obviously inferior all-move negatives; hard-pair accuracy, top-choice agreement, and
+regret show that the signal is still insufficient for pruning-sensitive move ordering. Production
+`agent.py` and `nnue.npz` were not changed. A future iteration needs a board-aware policy, not
+further tuning of this linear feature family.
