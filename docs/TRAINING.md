@@ -73,3 +73,25 @@ Lichess reservoir and labelled three Stockfish 18 depth-10 variations per root. 
 held-out MAE from 172.2 to 166.1 centipawns (3.5%). That was below the promotion threshold, so its
 weights were deleted. The result supports richer interaction features or a compact nonlinear model
 rather than further scaling a piece-square-only residual.
+
+## WDL and legal-move ranking experiment (2026-09-05)
+
+`tools/train_ranked_nnue.py` adds logistic WDL loss and pairwise logistic ranking between the
+teacher's MultiPV moves to an initialized HalfKP model. Child positions use the correctly negated
+side-to-move perspective, and WDL targets can blend teacher expectation with the source result.
+
+The first 2,000-position depth-10 MultiPV-3 experiment moved held-out top-1 agreement from 48.2%
+to 49.2%, but its 20-game paired pilot scored +4 =7 -9 (37.5%, about -89 unanchored Elo). It was
+rejected and the incumbent weights were restored.
+
+The labeler then gained a `--max-best-gap` filter and produced 5,000 balanced depth-12 MultiPV-3
+positions restricted to a best/second-best gap of at most 150 cp. The run required 5,776
+Stockfish 18 calls and produced 15,000 ranked moves. Its manifest records dataset SHA-256
+`6a99ce2956860d43c18266b74616492160783585c5a72de3fa7d4a67663aacff`.
+
+Across three predeclared objective mixes, WDL log-loss improved slightly but the best held-out
+top-1 agreement was only 43.5% versus the initialized model's 43.3%. Low-rate shared-feature
+fine-tuning also stayed flat or regressed. No depth-12 model advanced to games. This indicates that
+a scalar value head is an inadequate move-policy surrogate on close choices. The next ranking
+architecture should learn explicit move features and be tested as a low-cost ordering signal,
+without replacing the proven leaf evaluator.

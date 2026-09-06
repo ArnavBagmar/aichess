@@ -9,9 +9,18 @@ from tools.label_positions import random_position
 from tools.train_evaluator import FEATURES, features
 from tools.train_nnue import FEATURES as NNUE_FEATURES
 from tools.train_nnue import Example, halfkp_indices, metrics
+from tools.train_ranked_nnue import game_target, sigmoid
 
 
 class TrainingPipelineTests(unittest.TestCase):
+    def test_ranked_training_targets_follow_side_to_move(self) -> None:
+        self.assertEqual(game_target("1-0", chess.WHITE), 1.0)
+        self.assertEqual(game_target("1-0", chess.BLACK), 0.0)
+        self.assertEqual(game_target("0-1", chess.BLACK), 1.0)
+        self.assertEqual(game_target("1/2-1/2", chess.WHITE), 0.5)
+        self.assertIsNone(game_target("*", chess.WHITE))
+        self.assertAlmostEqual(sigmoid(0.0), 0.5)
+
     def test_nnue_metrics_measure_the_deployed_blend(self) -> None:
         example = Example(
             us=np.empty(0, dtype=np.int32),

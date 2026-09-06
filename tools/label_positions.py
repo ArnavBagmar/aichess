@@ -128,6 +128,11 @@ def main() -> None:
     parser.add_argument("--hash-mb", type=int, default=64)
     parser.add_argument("--max-abs-score", type=int, default=1_000)
     parser.add_argument("--multipv", type=int, default=3)
+    parser.add_argument(
+        "--max-best-gap",
+        type=int,
+        help="retain only positions whose best/second-best MultiPV gap is at most this many cp",
+    )
     parser.add_argument("--input-jsonl", type=Path)
     parser.add_argument(
         "--resume",
@@ -189,6 +194,12 @@ def main() -> None:
             attempted += 1
             if abs(score) > args.max_abs_score:
                 continue
+            if args.max_best_gap is not None and (
+                len(candidates) < 2
+                or int(candidates[0]["score_cp"]) - int(candidates[1]["score_cp"])
+                > args.max_best_gap
+            ):
+                continue
             record = {
                 "fen": key,
                 "score_cp": score,
@@ -216,6 +227,7 @@ def main() -> None:
         "teacher_calls": attempted,
         "max_abs_score": args.max_abs_score,
         "multipv": args.multipv,
+        "max_best_gap": args.max_best_gap,
         "input": args.input_jsonl.name if args.input_jsonl else "synthetic-random-play",
         "input_sha256": (
             hashlib.sha256(args.input_jsonl.read_bytes()).hexdigest()
