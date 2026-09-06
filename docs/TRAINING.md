@@ -95,3 +95,20 @@ fine-tuning also stayed flat or regressed. No depth-12 model advanced to games. 
 a scalar value head is an inadequate move-policy surrogate on close choices. The next ranking
 architecture should learn explicit move features and be tested as a low-cost ordering signal,
 without replacing the proven leaf evaluator.
+
+### Explicit quiet-move policy follow-up
+
+A 1,749-parameter phase-aware linear policy was trained directly on quiet MultiPV pairs. It used
+moving-piece, oriented source, oriented destination, and piece-destination features. The best run
+reached 55.8% held-out pairwise accuracy among deliberately close quiet choices.
+
+Applying the policy at every node reduced searched node counts but cost about 11% raw NPS and lost
+completed depth on two benchmark positions. Precomputing all additive terms into one lookup and
+limiting policy use to the first two plies removed most overhead, but the paired-game pilot still
+scored only +6 =6 -8 over 20 games (45.0%, about -35 unanchored Elo). The policy and candidate
+weights were rejected; production code and weights were restored.
+
+The result establishes a useful lower bound: a move-ordering classifier near 56% pairwise accuracy
+is not strong enough to interact safely with this engine's LMR and pruning. Future policy work
+should require materially higher held-out accuracy, include negative examples beyond teacher top-3,
+and be evaluated on node reduction at equal completed score/depth before any games.

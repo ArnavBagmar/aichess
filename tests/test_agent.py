@@ -47,6 +47,10 @@ class SearchTests(unittest.TestCase):
         board = chess.Board("6k1/8/8/4q3/8/8/4R3/6K1 w - - 0 1")
         self.assertEqual(get_move(board.fen(), 1_000), "e2e5")
 
+    def test_captures_newly_promoted_queen_in_public_regression(self) -> None:
+        board = chess.Board("2Q5/pb6/6p1/5p1p/7P/6Pk/5K2/8 b - - 0 48")
+        self.assertEqual(get_move(board.fen(), 250), "b7c8")
+
     def test_low_clock_always_returns_legal_move_quickly(self) -> None:
         board = chess.Board()
         start = time.perf_counter()
