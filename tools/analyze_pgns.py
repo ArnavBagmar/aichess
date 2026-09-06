@@ -33,10 +33,14 @@ def main() -> None:
     parser.add_argument("pgn_dirs", nargs="+", type=Path)
     parser.add_argument("--time-ms", type=int, default=20)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--player",
+        help="analyze only this named player's moves instead of paired-arena filename sides",
+    )
     args = parser.parse_args()
 
     totals: dict[str, list[int]] = defaultdict(list)
-    records: list[dict[str, object]] = []
+    records: list[dict[str, int | str]] = []
     engine = chess.engine.SimpleEngine.popen_uci(str(args.engine))
     engine.configure({"Threads": 1, "Hash": 64})
     try:
@@ -46,7 +50,15 @@ def main() -> None:
                     game = chess.pgn.read_game(handle)
                 if game is None:
                     continue
-                agent_color = chess.WHITE if path.stem.endswith("-1") else chess.BLACK
+                if args.player:
+                    if game.headers.get("White") == args.player:
+                        agent_color = chess.WHITE
+                    elif game.headers.get("Black") == args.player:
+                        agent_color = chess.BLACK
+                    else:
+                        continue
+                else:
+                    agent_color = chess.WHITE if path.stem.endswith("-1") else chess.BLACK
                 board = game.board()
                 for move in game.mainline_moves():
                     if board.turn == agent_color:
