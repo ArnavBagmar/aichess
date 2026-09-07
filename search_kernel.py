@@ -73,9 +73,17 @@ KILLER_BONUS: Final = 400_000
 LOSING_CAPTURE_BONUS: Final = 300_000  # captures SEE calls losing: after killers
 
 # Null-move pruning: if passing the turn still fails high, the position is good enough
-# that searching it properly is wasted work.
+# that searching it properly is wasted work. The reduction grows with depth, as in
+# every strong engine: a fixed two plies verified deep nodes far more than needed.
 NULL_MIN_DEPTH: Final = 3
-NULL_REDUCTION: Final = 2
+NULL_REDUCTION: Final = 3
+NULL_REDUCTION_DEPTH_DIVISOR: Final = 4  # one more ply of reduction per this many plies
+
+# Check extensions: a checking move is searched one ply deeper, but only when the
+# checking piece is not simply lost (SEE >= 0) and only while the line is shorter than
+# twice the root depth. Unbounded, rook checks kept rook endings at depth 7-10 with a
+# million nodes in rated games.
+CHECK_EXTENSION_PLY_FACTOR: Final = 2
 
 # Late move reductions. Moves the ordering put late are searched shallower first, and
 # only re-searched at full depth if they beat alpha after all. The reduction grows with
@@ -134,6 +142,7 @@ CTRL_NODE_LIMIT: Final = 3
 CTRL_ROOT_HINT: Final = 4
 CTRL_GENERATION: Final = 5
 CTRL_GAME_KEYS: Final = 6
+CTRL_ROOT_DEPTH: Final = 7  # depth of the current iteration; bounds check extensions
 CTRL_SIZE: Final = 8
 
 
@@ -563,8 +572,9 @@ def search(
         make_null(pieces, occupied, mailbox, state, keys, ply)
         copy_ply(ply, white_acc, black_acc, white_psqt, black_psqt)
         null_flags[ply + 1] = 1  # the child may not pass straight back
+        null_depth = depth - 1 - NULL_REDUCTION - depth // NULL_REDUCTION_DEPTH_DIVISOR
         passed = -search(
-            depth - 1 - NULL_REDUCTION, ply + 1, -beta, -beta + 1,
+            null_depth, ply + 1, -beta, -beta + 1,
             board, acc, net, tables, ctrl, deadline,
         )  # fmt: skip
         null_flags[ply + 1] = 0
@@ -621,8 +631,16 @@ def search(
             white_acc, black_acc, white_psqt, black_psqt,
         )  # fmt: skip
         # Checks are forcing: a line of them is cheap to follow and expensive to cut
-        # short, so a checking move is searched one ply deeper.
-        child = depth - 1 + (1 if gives_check else 0)
+        # short, so a checking move is searched one ply deeper, within the bounds set
+        # at CHECK_EXTENSION_PLY_FACTOR.
+        extension = 0
+        if (
+            gives_check
+            and ply < CHECK_EXTENSION_PLY_FACTOR * int(ctrl[CTRL_ROOT_DEPTH])
+            and see(pieces_row, mailbox_row, stm, occ, move, gain) >= 0
+        ):
+            extension = 1
+        child = depth - 1 + extension
         reduction = 0
         if (
             depth >= LMR_MIN_DEPTH

@@ -23,6 +23,7 @@ from search_kernel import (
     CTRL_GENERATION,
     CTRL_NODE_LIMIT,
     CTRL_NODES,
+    CTRL_ROOT_DEPTH,
     CTRL_ROOT_HINT,
     CTRL_ROOT_MOVE,
     CTRL_SIZE,
@@ -228,6 +229,7 @@ class Searcher:
     ) -> tuple[int, int]:
         self.ctrl[CTRL_ROOT_MOVE] = -1
         self.ctrl[CTRL_ROOT_HINT] = hint
+        self.ctrl[CTRL_ROOT_DEPTH] = depth
         score = search(
             depth,
             0,
