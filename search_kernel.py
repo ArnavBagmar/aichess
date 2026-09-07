@@ -107,6 +107,12 @@ FUTILITY_MARGIN: Final = 200 * SCORE_PER_CP  # about a pawn on the net's scale
 
 # The net does not score in nominal centipawns (a pawn is ~185, a knight ~1660 on
 # Engine.evaluate_cp); every margin below is sized to that scale, as in phase 5.
+# Eval shaping (see adjust_eval). The fifty-move scale is Stockfish's shape: the score
+# is worth (N - halfmove)/N of itself, reaching zero as the draw claim opens up.
+FIFTY_SCALE_PLIES: Final = 128
+MOPUP_EDGE: Final = 12 * SCORE_PER_CP  # per step of the losing king from the centre
+MOPUP_CLOSE: Final = 5 * SCORE_PER_CP  # per step the kings are closer than 7 apart
+
 RFP_MAX_DEPTH: Final = 3
 RFP_MARGIN: Final = 120 * SCORE_PER_CP
 DELTA_MARGIN: Final = 400 * SCORE_PER_CP
@@ -289,6 +295,63 @@ def insufficient_material(pieces_row: npt.NDArray[np.uint64]) -> bool:
 
 
 @_jit
+def _centre_distance(square: int) -> int:
+    """Chebyshev distance from the four centre squares: 0 on d4, 3 in a corner."""
+    file = square & 7
+    rank = square >> 3
+    df = 3 - file if file < 4 else file - 4
+    dr = 3 - rank if rank < 4 else rank - 4
+    return df if df > dr else dr
+
+
+@_jit
+def _king_distance(a: int, b: int) -> int:
+    df = (a & 7) - (b & 7)
+    dr = (a >> 3) - (b >> 3)
+    df = -df if df < 0 else df
+    dr = -dr if dr < 0 else dr
+    return df if df > dr else dr
+
+
+@_jit
+def adjust_eval(
+    static: int, pieces_row: npt.NDArray[np.uint64], state_row: npt.NDArray[np.int64], stm: int
+) -> int:
+    """The net's score, shaped for the two things the net does not know.
+
+    Progress: the score shrinks as the fifty-move counter climbs, so a winning side that
+    is only shuffling sees its advantage fade and looks for the pawn move or capture that
+    resets the count. A rated game sat at halfmove 96 in a won ending because the net
+    liked the unpromoted pawn on the seventh rank better than the promotion trade.
+
+    Mop-up: when the losing side has nothing but its king (or one minor) and the winner
+    has a rook or queen, the net has no idea how to mate, so the winner is paid for
+    driving the loser's king to the edge and bringing its own king close. The bonus
+    is in the net's units and small next to the material it rides on.
+    """
+    halfmove = int(state_row[HALFMOVE])
+    if halfmove > 0:
+        static = static * (FIFTY_SCALE_PLIES - halfmove) // FIFTY_SCALE_PLIES
+    winner = stm if static > 0 else stm ^ 1
+    loser = winner ^ 1
+    lb = loser * 6
+    wb = winner * 6
+    if pieces_row[lb + PAWN] != ZERO:
+        return static
+    if (pieces_row[lb + ROOK] | pieces_row[lb + QUEEN]) != ZERO:
+        return static
+    if popcount(pieces_row[lb + KNIGHT] | pieces_row[lb + BISHOP]) > 1:
+        return static
+    if (pieces_row[wb + ROOK] | pieces_row[wb + QUEEN]) == ZERO:
+        return static
+    loser_king = int(state_row[WKING + loser])
+    winner_king = int(state_row[WKING + winner])
+    bonus = MOPUP_EDGE * _centre_distance(loser_king)
+    bonus += MOPUP_CLOSE * (7 - _king_distance(loser_king, winner_king))
+    return static + bonus if winner == stm else static - bonus
+
+
+@_jit
 def is_repetition(
     keys: npt.NDArray[np.uint64], ply: int, game_keys: npt.NDArray[np.uint64], n_game_keys: int
 ) -> bool:
@@ -418,10 +481,11 @@ def search(
     # ---- quiescence: captures to a quiet position, so the evaluation is not mid-exchange
     if depth <= 0 or ply >= MAX_PLY_LIMIT:
         if ply >= MAX_PLY_LIMIT:
-            return evaluate(
+            static = evaluate(
                 ply, state, occupied, white_acc, black_acc, white_psqt, black_psqt,
                 act, l1c, l1x, l2c, l2x, l1_w, l1_b, l2_w, l2_b, out_w, out_b,
             )  # fmt: skip
+            return adjust_eval(static, pieces_row, state[ply], stm)
         static = -2 * MATE
         best = -2 * MATE
         if in_check:
@@ -432,6 +496,7 @@ def search(
                 ply, state, occupied, white_acc, black_acc, white_psqt, black_psqt,
                 act, l1c, l1x, l2c, l2x, l1_w, l1_b, l2_w, l2_b, out_w, out_b,
             )  # fmt: skip
+            static = adjust_eval(static, pieces_row, state[ply], stm)
             if static >= beta:
                 return static
             if static > alpha:
@@ -482,6 +547,7 @@ def search(
             ply, state, occupied, white_acc, black_acc, white_psqt, black_psqt,
             act, l1c, l1x, l2c, l2x, l1_w, l1_b, l2_w, l2_b, out_w, out_b,
         )  # fmt: skip
+        static = adjust_eval(static, pieces_row, state[ply], stm)
         have_static = True
         if static - RFP_MARGIN * depth >= beta:
             return static

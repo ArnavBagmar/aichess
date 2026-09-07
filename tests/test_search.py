@@ -281,3 +281,39 @@ def test_agent_falls_back_rather_than_raising_on_a_dead_clock() -> None:
 
     move = chess.Move.from_uci(agent.get_move(chess.STARTING_FEN, 0))
     assert move in chess.Board().legal_moves
+
+
+def _adjusted(searcher: Searcher, fen: str, halfmove: int | None = None) -> int:
+    board = chess.Board(fen)
+    if halfmove is not None:
+        board.halfmove_clock = halfmove
+    bb.set_from_board(board, searcher.board, 0)
+    stm = int(searcher.board.state[0, bb.STM])
+    return int(sk.adjust_eval(1000, searcher.board.pieces[0], searcher.board.state[0], stm))
+
+
+def test_score_fades_with_the_fifty_move_counter(searcher: Searcher) -> None:
+    fen = "r1bqkbnr/pppppppp/2n5/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 1"
+    fresh = _adjusted(searcher, fen, 0)
+    stale = _adjusted(searcher, fen, 90)
+    assert fresh == 1000
+    assert 0 < stale < 0.4 * fresh
+
+
+def test_mop_up_pays_for_cornering_the_bare_king(searcher: Searcher) -> None:
+    corner = _adjusted(searcher, "7k/8/6K1/8/8/8/8/R7 w - - 0 1")
+    centre = _adjusted(searcher, "8/8/3k4/8/8/8/8/R3K3 w - - 0 1")
+    assert corner > centre > 1000
+
+
+def test_mop_up_only_applies_when_the_loser_is_bare(searcher: Searcher) -> None:
+    assert _adjusted(searcher, "7k/7p/6K1/8/8/8/8/R7 w - - 0 1") == 1000
+    assert _adjusted(searcher, "7k/8/6K1/8/8/8/8/R6r w - - 0 1") == 1000
+
+
+def test_mop_up_is_symmetric_for_the_losing_side_to_move(searcher: Searcher) -> None:
+    board = chess.Board("7k/8/6K1/8/8/8/8/R7 b - - 0 1")
+    bb.set_from_board(board, searcher.board, 0)
+    stm = int(searcher.board.state[0, bb.STM])
+    score = int(sk.adjust_eval(-1000, searcher.board.pieces[0], searcher.board.state[0], stm))
+    assert score < -1000
