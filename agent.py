@@ -617,8 +617,6 @@ class Engine:
                         score = -self._negamax(board, depth - 1, -beta, -alpha, ply + 1, True)
             finally:
                 board.pop()
-            if move == self.repeated_root_move:
-                score -= REPETITION_MOVE_PENALTY
             if score > best_score:
                 best_score, best_move = score, move
             alpha = max(alpha, score)
@@ -664,6 +662,8 @@ class Engine:
                         score = -self._negamax(board, depth - 1, -beta, -alpha, 1, True)
             finally:
                 board.pop()
+            if move == self.repeated_root_move:
+                score -= REPETITION_MOVE_PENALTY
             if score > best_score:
                 best_score, best_move = score, move
             alpha = max(alpha, score)

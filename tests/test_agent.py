@@ -121,6 +121,27 @@ class SearchTests(unittest.TestCase):
         engine.root_choices[equal_key] = chess.Move.from_uci("e2e4")
         self.assertIsNone(engine._repetition_move(equal, equal_key))
 
+    def test_repetition_penalty_applies_at_root_not_descendants(self) -> None:
+        engine = Engine()
+        board = chess.Board()
+        remembered = chess.Move.from_uci("e2e4")
+        engine.repeated_root_move = remembered
+
+        def fixed_child_score(
+            child: chess.Board,
+            depth: int,
+            alpha: int,
+            beta: int,
+            ply: int,
+            allow_null: bool,
+        ) -> int:
+            del depth, alpha, beta, ply, allow_null
+            return -100 if child.peek() == remembered else 0
+
+        engine._negamax = fixed_child_score  # type: ignore[method-assign]
+        _, selected = engine._root(board, 1, -agent.INFINITY, agent.INFINITY)
+        self.assertNotEqual(selected, remembered)
+
     def test_benchmark_corpus_contains_legal_nonterminal_positions(self) -> None:
         phases = set()
         for position in POSITIONS:

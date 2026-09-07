@@ -338,6 +338,11 @@ be measured should not displace work that can.
   `17.Nxe6!` horizon failure and rejected. It still missed the tactic at depth 5 while increasing
   that search from roughly 73,000 to 89,000 nodes. Do not reintroduce broad queen-threat extensions
   without a substantially cheaper and better-targeted formulation.
+- A root repetition-avoidance audit found its score penalty was accidentally applied to identically
+  encoded moves at descendant nodes and never to the root candidate it was meant to discourage.
+  The penalty now applies only in root search, with a behavioral regression test. This removes
+  unintended tree distortion and makes the already-promoted winning-position repetition policy
+  operate as designed.
 - The first predeclared official-control confirmation against Stockfish 18's 2000-limited setting
   used ten realistic positions, reversed colors, at 120+0.5 with 100 ms Stockfish moves. The current
   build scored `+12 =4 -4` over 20 games (70.0%, +147.2 unanchored Elo), with pentanomial counts

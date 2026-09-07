@@ -135,3 +135,17 @@ satisfy with obviously inferior all-move negatives; hard-pair accuracy, top-choi
 regret show that the signal is still insufficient for pruning-sensitive move ordering. Production
 `agent.py` and `nnue.npz` were not changed. A future iteration needs a board-aware policy, not
 further tuning of this linear feature family.
+
+### Board-conditioned policy follow-up (2026-09-06)
+
+A compact bilinear policy encoded the complete side-relative 12x64 board, projected it to a learned
+context vector, and scored legal moves through piece/source/destination and tactical embeddings.
+On the same 527-position game-disjoint validation set, the width-32, 100 cp soft-target run reached
+54.8% hard-pair accuracy, 13.7% top-1 agreement, and 168.1 cp regret. A width-64 model with sharper
+25 cp targets reached 55.7%, 17.3%, and 170.5 cp respectively. Both were worse than the linear
+policy and were rejected without touching production weights.
+
+One-ply ordering with the incumbent handcrafted/NNUE evaluator was also measured rather than
+assumed useful. It reached 56.1% hard-pair accuracy, 15.7% top-1 agreement, and 283.9 cp regret.
+This confirms that static child evaluation is not a safe ordering shortcut; iterative deepening
+already supplies a tactically stabilized root move more effectively.
