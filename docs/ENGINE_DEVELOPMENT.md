@@ -343,6 +343,16 @@ be measured should not displace work that can.
   The penalty now applies only in root search, with a behavioral regression test. This removes
   unintended tree distortion and makes the already-promoted winning-position repetition policy
   operate as designed.
+- Pawn-structure correction history was tested as an isolated candidate against the exact `f462851`
+  checkpoint. It preserved benchmark depths and had no failures, but its 20-game reversed-color
+  screen scored `+6 =8 -6` (50.0%) with pentanomial counts `[1, 1, 5, 3, 0]`. The approximate
+  pair-aware 95% interval was 35.4%--64.6%. With no measured gain to justify extra search state and
+  pruning interaction, the candidate was rejected and production search was restored.
+- A bounded countermove reply table was then tested independently. It preserved completed benchmark
+  depths but reduced raw throughput by roughly 5%. Its 20-game reversed-color screen scored
+  `+9 =1 -10` (47.5%, about -17 unanchored Elo), with pentanomial counts `[1, 0, 8, 1, 0]`, no
+  failures, and an approximate pair-aware interval of 36.1%--58.9%. It also failed promotion and
+  was removed from production.
 - The first predeclared official-control confirmation against Stockfish 18's 2000-limited setting
   used ten realistic positions, reversed colors, at 120+0.5 with 100 ms Stockfish moves. The current
   build scored `+12 =4 -4` over 20 games (70.0%, +147.2 unanchored Elo), with pentanomial counts
