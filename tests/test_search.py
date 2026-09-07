@@ -53,6 +53,37 @@ def test_instability_means_a_changed_move_or_a_falling_score() -> None:
     assert not search.unstable(5, 5, 100, 100 - search.SCORE_DROP + 1)
 
 
+def test_shallow_iterations_never_count_as_unstable() -> None:
+    assert not search.unstable(5, 6, 100, 100, depth=search.UNSTABLE_MIN_DEPTH - 1)
+    assert search.unstable(5, 6, 100, 100, depth=search.UNSTABLE_MIN_DEPTH)
+
+
+def test_horizon_shrinks_with_the_move_number_down_to_a_floor() -> None:
+    assert search.horizon(1) > search.horizon(20) > search.horizon(30)
+    assert search.horizon(60) == search.HORIZON_MIN
+    assert search.horizon(200) == search.HORIZON_MIN
+
+
+def test_budget_is_flat_through_the_middlegame() -> None:
+    # The clocks a rated game actually had at moves 5, 20 and 35: the old fixed horizon
+    # spent 5.2 s, 2.6 s and 1.6 s on them; the sharp moves at 35 need more than that.
+    early = search.budget_ms(115_000, 5)
+    middle = search.budget_ms(58_000, 20)
+    late = search.budget_ms(31_000, 35)
+    assert 3_000 <= early <= 4_500
+    assert middle >= 0.8 * early
+    assert late >= 0.5 * early
+
+
+def test_budget_never_flags_over_a_long_game() -> None:
+    clock = 120_000.0
+    for fullmove in range(1, 120):
+        spend = search.hard_budget_ms(int(clock), fullmove) + search.SAFETY_MS
+        assert spend < clock
+        clock = clock - spend + search.INCREMENT_MS
+    assert clock > 0
+
+
 def test_mate_scores_are_stored_relative_to_the_node() -> None:
     assert search.to_tt_score(sk.MATE - 5, 3) == sk.MATE - 2
     assert search.from_tt_score(sk.MATE - 2, 3) == sk.MATE - 5

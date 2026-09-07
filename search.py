@@ -37,11 +37,15 @@ from search_kernel import from_tt_score as _from_tt_score
 from search_kernel import to_tt_score as _to_tt_score
 
 # Time control. Every term but INCREMENT_MS comes from the clock we were handed.
-# Rated games ended with 20-50 s of a ~145 s clock unused at a horizon of 30 moves, so
-# the horizon is shorter, and an iteration that changed its mind or saw the score fall
-# may run on to a hard limit: those are the moves where the extra depth matters.
-MOVES_REMAINING: Final = 24  # assumed horizon; self-correcting as the clock changes
-HARD_FACTOR: Final = 2.5  # an unstable search may spend this many budgets
+# A fixed horizon of N moves spends time_left/N, which decays with the clock: rated games
+# showed 5-11 s on the first moves and 1.2-1.6 s on the sharp middlegame moves that lost
+# them, with 20-30 s still unused at the end. The horizon now follows the move number
+# (the opening has many moves ahead, the middlegame fewer) with a floor that lets the
+# increment carry long endgames, which flattens the spend to ~3.7 s through move 30.
+HORIZON_BASE: Final = 40  # moves remaining assumed at move 0
+HORIZON_MIN: Final = 16  # never plan for fewer moves than this
+HARD_FACTOR: Final = 2.0  # an unstable search may spend this many budgets
+UNSTABLE_MIN_DEPTH: Final = 6  # shallow iterations flip constantly; ignore them
 SCORE_DROP: Final = 40 * SCORE_PER_CP  # a fall this large marks the search unstable
 INCREMENT_MS: Final = 500  # published time control: 120 s + 0.5 s per move
 SAFETY_MS: Final = 50  # margin; the referee measures wall time and does not forgive
@@ -56,26 +60,39 @@ ASPIRATION_WINDOW: Final = 250 * SCORE_PER_CP  # about 1.3 pawns on the net's sc
 MAX_GAME_KEYS: Final = 1024  # root positions remembered for repetition detection
 
 
-def budget_ms(time_left_ms: int) -> float:
+def horizon(fullmove: int) -> int:
+    """Moves we plan to spread the remaining clock over, given the move number."""
+    return max(HORIZON_MIN, HORIZON_BASE - fullmove)
+
+
+def budget_ms(time_left_ms: int, fullmove: int = 1) -> float:
     """Milliseconds to spend on this move, derived from the clock we were handed.
 
     Only a fraction of INCREMENT_MS is claimed: it is the one number taken from the
     published rules rather than the input, so if the platform ever changed the
     increment the result is a conservative budget rather than a flag.
     """
-    budget = time_left_ms / MOVES_REMAINING + 0.6 * INCREMENT_MS
+    budget = time_left_ms / horizon(fullmove) + 0.6 * INCREMENT_MS
     budget = min(budget, MAX_FRACTION * time_left_ms)
     return max(budget - SAFETY_MS, MIN_BUDGET_MS)
 
 
-def hard_budget_ms(time_left_ms: int) -> float:
+def hard_budget_ms(time_left_ms: int, fullmove: int = 1) -> float:
     """The most an unstable search may spend: several budgets, never a big clock share."""
-    soft = budget_ms(time_left_ms)
+    soft = budget_ms(time_left_ms, fullmove)
     return max(min(HARD_FACTOR * soft, MAX_FRACTION * time_left_ms - SAFETY_MS), soft)
 
 
-def unstable(previous_move: int, move: int, previous_score: int | None, score: int) -> bool:
-    """Whether the last iteration changed its mind or saw the position get worse."""
+def unstable(
+    previous_move: int, move: int, previous_score: int | None, score: int, depth: int = MAX_DEPTH
+) -> bool:
+    """Whether the last iteration changed its mind or saw the position get worse.
+
+    Iterations shallower than UNSTABLE_MIN_DEPTH do not count: they change their mind
+    on nearly every move, and extending on them is what burned 5-11 s per opening move.
+    """
+    if depth < UNSTABLE_MIN_DEPTH:
+        return False
     if previous_move >= 0 and move >= 0 and move != previous_move:
         return True
     return previous_score is not None and score < previous_score - SCORE_DROP
@@ -238,8 +255,8 @@ class Searcher:
         self.note_root_position(board)
         self._set_root(board)
         started = time.monotonic()
-        soft = started + budget_ms(time_left_ms) / 1000.0
-        hard = started + hard_budget_ms(time_left_ms) / 1000.0
+        soft = started + budget_ms(time_left_ms, board.fullmove_number) / 1000.0
+        hard = started + hard_budget_ms(time_left_ms, board.fullmove_number) / 1000.0
         self.ctrl[CTRL_NODES] = 0
         self.ctrl[CTRL_ABORT] = 0
         self.ctrl[CTRL_NODE_LIMIT] = node_limit
@@ -273,9 +290,11 @@ class Searcher:
                 break
             if move >= 0:
                 best = move
-            if abs(score) >= MATE_THRESHOLD:
-                break  # a forced mate is as good as it gets
-            extend = unstable(previous_move, move, previous_score, score)
+            if score >= MATE_THRESHOLD:
+                break  # a forced mate for us is as good as it gets
+            # A forced mate against us is not final: deeper iterations find the longest
+            # defence, and the opponent has to see the whole line to cash it.
+            extend = unstable(previous_move, move, previous_score, score, depth)
             previous_move, previous_score = move, score
         self.nodes = int(self.ctrl[CTRL_NODES])
         self.score = score  # last completed iteration, for the side to move, 1/32 cp
