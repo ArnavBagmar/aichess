@@ -141,6 +141,46 @@ cap and an emergency mode that can live within the increment indefinitely.
 6. Do not imitate long wins blindly. Several games show missed faster mates, so use mate distance
    and tablebase-like regression positions to improve conversion without expanding every node.
 
+## Quantified style fingerprint
+
+Across 1,561 Emile moves, 83.4% were quiet, 15.6% were captures, and 12.8% gave check. The phase
+split is more revealing than the overall totals:
+
+- opening: 20.5% captures and only 4.1% checks;
+- middlegame: 22.9% captures and 9.6% checks;
+- endgame: only 8.4% captures but 17.5% checks, largely sustained rook/queen pressure.
+
+This is not a speculative attacking style. It is patient, low-error play that uses forcing moves
+selectively. Rooks account for 26.5% of all moves and kings 17.8%, partly because the sample contains
+several exceptionally long technical endings. The useful lesson is conversion and maneuvering
+quality, not an unconditional preference for rook moves or checks.
+
+Clock use is strongly state-dependent. Median gross spend was 1.451 seconds, the 90th percentile
+was 3.385 seconds, and no observed move exceeded 4.379 seconds. Mean spend fell from 3.045 seconds
+with more than a minute remaining, to 1.174 seconds from 10--60 seconds, and to 0.527 seconds below
+10 seconds. Below ten seconds the bot essentially lives on the increment. This hard cap and smooth
+emergency taper are a material part of its effective strength.
+
+## Direct diagnostic comparison
+
+A deterministic stride-five sample extracted 323 positions Emile actually faced; 300 were labelled
+across every legal move by Stockfish 18 at depth 10. On 299 non-forced positions, Emile matched the
+teacher's first move 50.2% of the time with 14.1 cp mean regret. Our engine at a 500 ms diagnostic
+budget matched 32.4% with 39.4 cp regret.
+
+On the 30 positions where Stockfish's first move led the second by at least 100 cp, Emile scored
+96.7% top-1 with 4.4 cp regret. Our engine scored 73--77% at 500 ms, depending on ordinary timing
+noise, but improved to 90.0% and 18.1 cp regret with 60 seconds shown on its clock (about a
+three-second practical search allocation). Thus most of the apparent tactical gap is depth/time;
+the remaining gap is evaluation of quiet positions.
+
+The three remaining high-margin misses at the realistic budget were queen placement and a quiet
+`...g5` pawn break. Fixed-depth probes did not recover the teacher choices through depth 9. In one
+case the teacher move appeared at depths 1--2 and disappeared from depth 3 onward. This is evidence
+against adding broad tactical extensions: the immediate AlphaFish-style target is richer positional
+evaluation for quiet pawn breaks, king safety, and piece coordination, followed by conversion
+testing. Singular extensions will not repair a move the evaluator consistently prefers against.
+
 The broad machine-readable analysis is stored locally at
 `match-results/emile-andrieu-rounds-9-30-analysis.json`; the supplied PGNs are copied under
 `match-results/emile-andrieu-rounds-9-30/` for reproducible local study and remain outside the
