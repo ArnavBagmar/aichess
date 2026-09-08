@@ -298,7 +298,8 @@ def _forward(
     skip = np.int64(l1c[L2 - 2]) - np.int64(l1c[L2 - 1])
     for j in range(L2):
         pre = np.int64(l1c[j])
-        l1x[j] = int(min((pre * pre) >> L1_SQUARE_SHIFT, HIDDEN_ACT_MAX))
+        square = int((pre * pre) >> L1_SQUARE_SHIFT)
+        l1x[j] = square if square < HIDDEN_ACT_MAX else HIDDEN_ACT_MAX
         l1x[L2 + j] = min(max(l1c[j] >> L1_LINEAR_SHIFT, 0), HIDDEN_ACT_MAX)
 
     for j in range(L3):
@@ -309,7 +310,8 @@ def _forward(
         l2c[j] = total
     for j in range(L3):
         pre = np.int64(l2c[j])
-        l2x[j] = int(min((pre * pre) >> L2_SQUARE_SHIFT, HIDDEN_ACT_MAX))
+        square = int((pre * pre) >> L2_SQUARE_SHIFT)
+        l2x[j] = square if square < HIDDEN_ACT_MAX else HIDDEN_ACT_MAX
         l2x[L3 + j] = min(max(l2c[j] >> L2_LINEAR_SHIFT, 0), HIDDEN_ACT_MAX)
 
     out32 = np.int32(out_b)
