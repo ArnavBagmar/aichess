@@ -8,6 +8,7 @@ import random
 import time
 
 import chess
+import numpy as np
 import pytest
 
 import bitboard as bb
@@ -320,3 +321,17 @@ def test_mop_up_is_symmetric_for_the_losing_side_to_move(searcher: Searcher) -> 
     stm = int(searcher.board.state[0, bb.STM])
     score = int(sk.adjust_eval(-1000, searcher.board.pieces[0], searcher.board.state[0], stm))
     assert score < -1000
+
+
+def test_history_stays_bounded_and_decays() -> None:
+    history = np.zeros((64, 64), dtype=np.int64)
+    move = 12 | (28 << 6)  # e2e4 encoded as from | to << 6
+    for _ in range(200):
+        sk.history_update(history, move, sk.history_bonus(9))
+    assert 0 < history[12, 28] <= sk.HISTORY_MAX
+    peak = int(history[12, 28])
+    for _ in range(20):
+        sk.history_update(history, move, -sk.history_bonus(9))
+    assert history[12, 28] < peak
+    assert sk.history_bonus(1) < sk.history_bonus(4) <= sk.HISTORY_BONUS_CAP
+    assert sk.HISTORY_MAX // sk.HISTORY_LMR_DIVISOR <= 2

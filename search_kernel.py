@@ -109,6 +109,13 @@ LMR_TABLE: Final = _lmr_table()
 # quiet move that saves it.
 LMP_MAX_DEPTH: Final = 8
 
+# History: a bounded record per (from, to) of how often a quiet move caused a cutoff,
+# with gravity so it never exceeds HISTORY_MAX. It orders quiet moves and adjusts the
+# late move reduction by up to HISTORY_MAX / HISTORY_LMR_DIVISOR plies either way.
+HISTORY_MAX: Final = 16384
+HISTORY_BONUS_CAP: Final = 2048
+HISTORY_LMR_DIVISOR: Final = 8192
+
 # The static evaluation is kept per ply so a node can tell whether it is improving
 # (evaluation above the one two plies ago). NO_EVAL marks plies searched in check.
 NO_EVAL: Final = -3 * MATE
@@ -298,6 +305,26 @@ def has_major_material(pieces_row: npt.NDArray[np.uint64], stm: int) -> bool:
     majors = pieces_row[base + KNIGHT] | pieces_row[base + BISHOP]
     majors |= pieces_row[base + ROOK] | pieces_row[base + QUEEN]
     return bool(majors != ZERO)
+
+
+@_jit
+def history_bonus(depth: int) -> int:
+    """Credit for a quiet move that caused a cutoff at `depth`; grows with depth, capped."""
+    return min(HISTORY_BONUS_CAP, 32 * depth * depth)
+
+
+@_jit
+def history_update(history: npt.NDArray[np.int64], move: int, bonus: int) -> None:
+    """Move `move`'s record toward `bonus` with gravity, so it stays within HISTORY_MAX.
+
+    The classic form: the closer the record already is to the bound, the less a new
+    bonus moves it, and old records decay as new evidence arrives.
+    """
+    frm = move & 63
+    to = (move >> 6) & 63
+    current = int(history[frm, to])
+    magnitude = -bonus if bonus < 0 else bonus
+    history[frm, to] = current + bonus - current * magnitude // HISTORY_MAX
 
 
 @_jit
@@ -678,6 +705,9 @@ def search(
             and not gives_check
         ):
             reduction = int(LMR_TABLE[depth, index]) + (0 if improving else 1)
+            # A move with a good history record has earned a fuller look; a bad one
+            # is reduced further. The record is bounded, so this is at most two plies.
+            reduction -= int(history[move & 63, (move >> 6) & 63]) // HISTORY_LMR_DIVISOR
             reduction = max(0, min(reduction, child - 1))
         if index == 0:
             score = -search(child, ply + 1, -beta, -alpha, board, acc, net, tables, ctrl, deadline)
@@ -711,7 +741,14 @@ def search(
                 if killers[ply, 0] != move:
                     killers[ply, 1] = killers[ply, 0]
                     killers[ply, 0] = move
-                history[move & 63, (move >> 6) & 63] += depth * depth
+                bonus = history_bonus(depth)
+                history_update(history, move, bonus)
+                # The quiet moves tried before this one were the wrong order: push
+                # them down so the next visit finds the cutoff sooner.
+                for j in range(i):
+                    earlier = int(moves[ply, j])
+                    if not is_tactical(earlier):
+                        history_update(history, earlier, -bonus)
             break
 
     if legal == 0:
