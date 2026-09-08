@@ -68,11 +68,11 @@ class AccStacks(NamedTuple):
     black_acc: npt.NDArray[np.int16]
     white_psqt: npt.NDArray[np.int32]
     black_psqt: npt.NDArray[np.int32]
-    act: npt.NDArray[np.int64]
-    l1c: npt.NDArray[np.int64]
-    l1x: npt.NDArray[np.int64]
-    l2c: npt.NDArray[np.int64]
-    l2x: npt.NDArray[np.int64]
+    act: npt.NDArray[np.int32]
+    l1c: npt.NDArray[np.int32]
+    l1x: npt.NDArray[np.int32]
+    l2c: npt.NDArray[np.int32]
+    l2x: npt.NDArray[np.int32]
 
 
 def new_acc_stacks() -> AccStacks:
@@ -81,11 +81,11 @@ def new_acc_stacks() -> AccStacks:
         np.zeros((MAX_PLY, L1), dtype=np.int16),
         np.zeros((MAX_PLY, NUM_PSQT_BUCKETS), dtype=np.int32),
         np.zeros((MAX_PLY, NUM_PSQT_BUCKETS), dtype=np.int32),
-        np.zeros(L1, dtype=np.int64),
-        np.zeros(L2, dtype=np.int64),
-        np.zeros(2 * L2, dtype=np.int64),
-        np.zeros(L3, dtype=np.int64),
-        np.zeros(2 * L3, dtype=np.int64),
+        np.zeros(L1, dtype=np.int32),
+        np.zeros(L2, dtype=np.int32),
+        np.zeros(2 * L2, dtype=np.int32),
+        np.zeros(L3, dtype=np.int32),
+        np.zeros(2 * L3, dtype=np.int32),
     )
 
 
@@ -269,14 +269,18 @@ def _forward(
     l2_b: npt.NDArray[np.int32],
     out_w: npt.NDArray[np.int8],
     out_b: int,
-    act: npt.NDArray[np.int64],
-    l1c: npt.NDArray[np.int64],
-    l1x: npt.NDArray[np.int64],
-    l2c: npt.NDArray[np.int64],
-    l2x: npt.NDArray[np.int64],
+    act: npt.NDArray[np.int32],
+    l1c: npt.NDArray[np.int32],
+    l1x: npt.NDArray[np.int32],
+    l2c: npt.NDArray[np.int32],
+    l2x: npt.NDArray[np.int32],
 ) -> int:
     half = L1 // 2
 
+    # Every dot product below accumulates in int32: the activations are at most 127
+    # and a row has at most 256 int8 weights, so a sum stays under 2^23. That matters
+    # because AVX2 has no 64-bit vector multiply, and int32 lets numba vectorize the
+    # inner loops; the squares of the pre-activations need int64 and stay scalar.
     for i in range(half):
         a = min(max(int(stm_acc[i]), 0), FT_ACT_MAX)
         b = min(max(int(stm_acc[half + i]), 0), FT_ACT_MAX)
@@ -286,29 +290,34 @@ def _forward(
         act[half + i] = (c * d) >> FT_PAIRWISE_SHIFT
 
     for j in range(L2):
-        total = np.int64(l1_b[j])
+        total = np.int32(l1_b[j])
+        row = l1_w[j]
         for i in range(L1):
-            total += np.int64(l1_w[j, i]) * act[i]
+            total += np.int32(row[i]) * act[i]
         l1c[j] = total
-    skip = l1c[L2 - 2] - l1c[L2 - 1]
+    skip = np.int64(l1c[L2 - 2]) - np.int64(l1c[L2 - 1])
     for j in range(L2):
-        l1x[j] = min((l1c[j] * l1c[j]) >> L1_SQUARE_SHIFT, HIDDEN_ACT_MAX)
+        pre = np.int64(l1c[j])
+        l1x[j] = int(min((pre * pre) >> L1_SQUARE_SHIFT, HIDDEN_ACT_MAX))
         l1x[L2 + j] = min(max(l1c[j] >> L1_LINEAR_SHIFT, 0), HIDDEN_ACT_MAX)
 
     for j in range(L3):
-        total = np.int64(l2_b[j])
+        total = np.int32(l2_b[j])
+        row2 = l2_w[j]
         for i in range(2 * L2):
-            total += np.int64(l2_w[j, i]) * l1x[i]
+            total += np.int32(row2[i]) * l1x[i]
         l2c[j] = total
     for j in range(L3):
-        l2x[j] = min((l2c[j] * l2c[j]) >> L2_SQUARE_SHIFT, HIDDEN_ACT_MAX)
+        pre = np.int64(l2c[j])
+        l2x[j] = int(min((pre * pre) >> L2_SQUARE_SHIFT, HIDDEN_ACT_MAX))
         l2x[L3 + j] = min(max(l2c[j] >> L2_LINEAR_SHIFT, 0), HIDDEN_ACT_MAX)
 
-    out = np.int64(out_b)
+    out32 = np.int32(out_b)
     for i in range(2 * L2):
-        out += np.int64(out_w[i]) * l1x[i]
+        out32 += np.int32(out_w[i]) * l1x[i]
     for i in range(2 * L3):
-        out += np.int64(out_w[2 * L2 + i]) * l2x[i]
+        out32 += np.int32(out_w[2 * L2 + i]) * l2x[i]
+    out = np.int64(out32)
 
     # Trunc-toward-zero division, matching the trainer's rounding_mode="trunc".
     numerator = (out + skip) * OUTPUT_MUL
@@ -328,11 +337,11 @@ def evaluate(
     black_acc: npt.NDArray[np.int16],
     white_psqt: npt.NDArray[np.int32],
     black_psqt: npt.NDArray[np.int32],
-    act: npt.NDArray[np.int64],
-    l1c: npt.NDArray[np.int64],
-    l1x: npt.NDArray[np.int64],
-    l2c: npt.NDArray[np.int64],
-    l2x: npt.NDArray[np.int64],
+    act: npt.NDArray[np.int32],
+    l1c: npt.NDArray[np.int32],
+    l1x: npt.NDArray[np.int32],
+    l2c: npt.NDArray[np.int32],
+    l2x: npt.NDArray[np.int32],
     l1_w: npt.NDArray[np.int8],
     l1_b: npt.NDArray[np.int32],
     l2_w: npt.NDArray[np.int8],
