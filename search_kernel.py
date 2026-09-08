@@ -44,6 +44,7 @@ from bitboard import (
     ZERO,
     attackers_to,
     bit,
+    copy_position,
     generate_moves,
     is_attacked,
     lsb,
@@ -123,6 +124,13 @@ NO_EVAL: Final = -3 * MATE
 # Internal iterative reductions: a node with no table move at real depth is searched
 # a ply shallower; its own iteration fills the table for the next visit.
 IIR_MIN_DEPTH: Final = 5
+
+# Singular extensions: when the table move's score stands well above every other
+# move at half depth, it is the only move and is searched a ply deeper. When some
+# other move already beats beta at half depth, the node fails high at once (multi-cut).
+SINGULAR_MIN_DEPTH: Final = 7
+SINGULAR_TT_DEPTH_SLACK: Final = 3  # the table entry may be this many plies shallower
+SINGULAR_MARGIN: Final = 2 * SCORE_PER_CP  # per ply of depth, below the table score
 
 # Futility pruning at frontier nodes: a quiet move cannot lift a static evaluation
 # this far below alpha within the plies that remain, so it is not searched.
@@ -487,7 +495,9 @@ def search(
     pieces, occupied, mailbox, state, keys = board
     white_acc, black_acc, white_psqt, black_psqt, act, l1c, l1x, l2c, l2x = acc
     ft_w, ft_b, psqt_w, l1_w, l1_b, l2_w, l2_b, out_w, out_b = net
-    tt_keys, tt_data, killers, history, moves, scores, game_keys, gain, null_flags, evals = tables
+    tt_keys, tt_data, killers, history, moves, scores, game_keys = tables[:7]
+    gain, null_flags, evals, excluded = tables[7:]
+    excluded_move = int(excluded[ply])
 
     ctrl[CTRL_NODES] += 1
     if ctrl[CTRL_NODES] % CLOCK_CHECK_NODES == 0:
@@ -503,19 +513,32 @@ def search(
     pieces_row = pieces[ply]
     mailbox_row = mailbox[ply]
 
-    if ply > 0 and (
-        state[ply, HALFMOVE] >= 100
-        or insufficient_material(pieces_row)
-        or is_repetition(keys, ply, game_keys, int(ctrl[CTRL_GAME_KEYS]))
+    # A singular sub-search runs on a copy of its parent's position, so the draw
+    # checks (which would see the parent as a repetition) and table cutoffs (which
+    # would answer for the excluded move) are skipped while a move is excluded.
+    if (
+        ply > 0
+        and excluded_move < 0
+        and (
+            state[ply, HALFMOVE] >= 100
+            or insufficient_material(pieces_row)
+            or is_repetition(keys, ply, game_keys, int(ctrl[CTRL_GAME_KEYS]))
+        )
     ):
         return 0
 
     hash_move = -1
+    tt_hit_depth = -1
+    tt_hit_bound = UPPER
+    tt_hit_score = 0
     slot = int(key & np.uint64(TT_SIZE - 1))
     if tt_keys[slot] == key:
         data = int(tt_data[slot])
         hash_move = tt_move(data)
-        if ply > 0 and tt_depth(data) >= depth:
+        tt_hit_depth = tt_depth(data)
+        tt_hit_bound = tt_bound(data)
+        tt_hit_score = from_tt_score(tt_score(data), ply)
+        if ply > 0 and excluded_move < 0 and tt_depth(data) >= depth:
             stored = from_tt_score(tt_score(data), ply)
             bound = tt_bound(data)
             if bound == EXACT:
@@ -618,6 +641,7 @@ def search(
 
     if (
         ply > 0
+        and excluded_move < 0
         and null_flags[ply] == 0
         and depth >= NULL_MIN_DEPTH
         and not in_check
@@ -652,6 +676,39 @@ def search(
     legal = 0
     for i in range(count):
         move = pick_next(moves[ply], scores[ply], i, count)
+        if move == excluded_move:
+            continue
+        singular = 0
+        if (
+            ply > 0
+            and move == hash_move
+            and excluded_move < 0
+            and depth >= SINGULAR_MIN_DEPTH
+            and tt_hit_bound != UPPER
+            and tt_hit_depth >= depth - SINGULAR_TT_DEPTH_SLACK
+            and -MATE_THRESHOLD < tt_hit_score < MATE_THRESHOLD
+            and ply + 1 < MAX_PLY_LIMIT
+        ):
+            # Is the table move the only good one? Search every other move at half
+            # depth from a scratch copy of this position one ply up, with this move
+            # excluded, against a window just below the table score.
+            singular_beta = tt_hit_score - SINGULAR_MARGIN * depth
+            copy_position(pieces, occupied, mailbox, state, keys, ply)
+            copy_ply(ply, white_acc, black_acc, white_psqt, black_psqt)
+            excluded[ply + 1] = move
+            null_flags[ply + 1] = 1
+            others = search(
+                (depth - 1) // 2, ply + 1, singular_beta - 1, singular_beta,
+                board, acc, net, tables, ctrl, deadline,
+            )  # fmt: skip
+            excluded[ply + 1] = -1
+            null_flags[ply + 1] = 0
+            if ctrl[CTRL_ABORT]:
+                return 0
+            if others < singular_beta:
+                singular = 1
+            elif others >= beta:
+                return others  # multi-cut: another move already beats beta
         if not make_move(pieces, occupied, mailbox, state, keys, ply, move):
             continue
         index = legal
@@ -688,7 +745,7 @@ def search(
         # Checks are forcing: a line of them is cheap to follow and expensive to cut
         # short, so a checking move is searched one ply deeper, within the bounds set
         # at CHECK_EXTENSION_PLY_FACTOR.
-        extension = 0
+        extension = singular
         if (
             gives_check
             and ply < CHECK_EXTENSION_PLY_FACTOR * int(ctrl[CTRL_ROOT_DEPTH])
@@ -766,7 +823,7 @@ def search(
         and tt_generation(existing) == (int(ctrl[CTRL_GENERATION]) & 15)
         and tt_depth(existing) > depth
     )
-    if not keep:
+    if not keep and excluded_move < 0:
         tt_keys[slot] = key
         tt_data[slot] = pack_tt(
             depth, bound, int(ctrl[CTRL_GENERATION]), max(best_move, 0), to_tt_score(best, ply)

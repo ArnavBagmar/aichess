@@ -652,6 +652,24 @@ def make_move(
 
 
 @_jit
+def copy_position(
+    pieces: npt.NDArray[np.uint64],
+    occupied: npt.NDArray[np.uint64],
+    mailbox: npt.NDArray[np.int8],
+    state: npt.NDArray[np.int32],
+    keys: npt.NDArray[np.uint64],
+    ply: int,
+) -> None:
+    """Duplicate the position at `ply` into ply + 1, side to move and all.
+
+    The search uses this to run a sub-search on the same position from a scratch
+    ply, since every per-ply table of the ply itself is in use by the move loop.
+    """
+    _copy_ply(pieces, occupied, mailbox, state, ply)
+    keys[ply + 1] = keys[ply]
+
+
+@_jit
 def make_null(
     pieces: npt.NDArray[np.uint64],
     occupied: npt.NDArray[np.uint64],
