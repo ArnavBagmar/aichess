@@ -103,10 +103,19 @@ def _lmr_table() -> npt.NDArray[np.int64]:
 
 LMR_TABLE: Final = _lmr_table()
 
-# Late move pruning: near the leaves, once a few quiet moves have been searched the
-# rest are skipped outright. Indexed by depth: the number of moves searched first.
-LMP_MAX_DEPTH: Final = 3
-LMP_LIMIT: Final = np.array([0, 5, 11, 21], dtype=np.int64)
+# Late move pruning: near the leaves, once enough quiet moves have been searched the
+# rest are skipped outright. The count is Stockfish's (3 + depth^2), halved when the
+# static evaluation is not improving, because a worsening line rarely has a late
+# quiet move that saves it.
+LMP_MAX_DEPTH: Final = 8
+
+# The static evaluation is kept per ply so a node can tell whether it is improving
+# (evaluation above the one two plies ago). NO_EVAL marks plies searched in check.
+NO_EVAL: Final = -3 * MATE
+
+# Internal iterative reductions: a node with no table move at real depth is searched
+# a ply shallower; its own iteration fills the table for the next visit.
+IIR_MIN_DEPTH: Final = 5
 
 # Futility pruning at frontier nodes: a quiet move cannot lift a static evaluation
 # this far below alpha within the plies that remain, so it is not searched.
@@ -292,6 +301,12 @@ def has_major_material(pieces_row: npt.NDArray[np.uint64], stm: int) -> bool:
 
 
 @_jit
+def lmp_limit(depth: int, improving: bool) -> int:
+    """Quiet moves searched before late move pruning skips the rest at `depth`."""
+    return (3 + depth * depth) // (1 if improving else 2)
+
+
+@_jit
 def insufficient_material(pieces_row: npt.NDArray[np.uint64]) -> bool:
     """No pawns, rooks or queens, and at most one minor piece on the board."""
     heavy = pieces_row[PAWN] | pieces_row[6 + PAWN] | pieces_row[ROOK] | pieces_row[6 + ROOK]
@@ -445,7 +460,7 @@ def search(
     pieces, occupied, mailbox, state, keys = board
     white_acc, black_acc, white_psqt, black_psqt, act, l1c, l1x, l2c, l2x = acc
     ft_w, ft_b, psqt_w, l1_w, l1_b, l2_w, l2_b, out_w, out_b = net
-    tt_keys, tt_data, killers, history, moves, scores, game_keys, gain, null_flags = tables
+    tt_keys, tt_data, killers, history, moves, scores, game_keys, gain, null_flags, evals = tables
 
     ctrl[CTRL_NODES] += 1
     if ctrl[CTRL_NODES] % CLOCK_CHECK_NODES == 0:
@@ -548,18 +563,31 @@ def search(
         return best
 
     # ---- main search ---------------------------------------------------------------------
-    static = -2 * MATE
+    if ply > 0 and depth >= IIR_MIN_DEPTH and hash_move < 0:
+        depth -= 1  # internal iterative reduction: no table move to lead with
+
+    static = NO_EVAL
     have_static = False
-    if ply > 0 and depth <= RFP_MAX_DEPTH and not in_check and beta < MATE_THRESHOLD:
-        # Reverse futility: a static evaluation comfortably above beta is trusted.
+    improving = False
+    if not in_check:
         static = evaluate(
             ply, state, occupied, white_acc, black_acc, white_psqt, black_psqt,
             act, l1c, l1x, l2c, l2x, l1_w, l1_b, l2_w, l2_b, out_w, out_b,
         )  # fmt: skip
         static = adjust_eval(static, pieces_row, state[ply], stm)
         have_static = True
-        if static - RFP_MARGIN * depth >= beta:
-            return static
+        improving = ply >= 2 and evals[ply - 2] != NO_EVAL and static > evals[ply - 2]
+    evals[ply] = static
+    if (
+        ply > 0
+        and depth <= RFP_MAX_DEPTH
+        and have_static
+        and beta < MATE_THRESHOLD
+        and static - RFP_MARGIN * (depth - (1 if improving else 0)) >= beta
+    ):
+        # Reverse futility: a static evaluation comfortably above beta is trusted, and
+        # an improving one needs less margin.
+        return static
 
     if (
         ply > 0
@@ -617,7 +645,7 @@ def search(
             and best > -MATE_THRESHOLD
             and beta < MATE_THRESHOLD
         ):
-            if depth <= LMP_MAX_DEPTH and index >= LMP_LIMIT[depth]:
+            if depth <= LMP_MAX_DEPTH and index >= lmp_limit(depth, improving):
                 continue
             if (
                 depth <= FUTILITY_MAX_DEPTH
@@ -649,7 +677,8 @@ def search(
             and not in_check
             and not gives_check
         ):
-            reduction = int(min(LMR_TABLE[depth, index], child - 1))
+            reduction = int(LMR_TABLE[depth, index]) + (0 if improving else 1)
+            reduction = max(0, min(reduction, child - 1))
         if index == 0:
             score = -search(child, ply + 1, -beta, -alpha, board, acc, net, tables, ctrl, deadline)
         else:

@@ -112,8 +112,11 @@ def test_lmr_table_grows_with_depth_and_move_number() -> None:
 
 
 def test_pruning_limits_are_ordered() -> None:
-    assert list(sk.LMP_LIMIT) == sorted(sk.LMP_LIMIT)
-    assert sk.LMP_LIMIT[sk.LMP_MAX_DEPTH] > sk.LMR_MIN_MOVES
+    for depth in range(1, sk.LMP_MAX_DEPTH):
+        assert sk.lmp_limit(depth, True) <= sk.lmp_limit(depth + 1, True)
+        assert sk.lmp_limit(depth, False) <= sk.lmp_limit(depth, True)
+    assert sk.lmp_limit(1, False) >= 2  # never prune the first reply
+    assert sk.lmp_limit(sk.LMP_MAX_DEPTH, True) > sk.LMR_MIN_MOVES
     assert sk.FUTILITY_MAX_DEPTH < sk.RFP_MAX_DEPTH + 1
 
 

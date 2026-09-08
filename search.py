@@ -143,6 +143,7 @@ class Searcher:
         self.game_keys = np.zeros(MAX_GAME_KEYS, dtype=np.uint64)
         self.see_gain = np.zeros(32, dtype=np.int64)
         self.null_flags = np.zeros(bb.MAX_PLY, dtype=np.int8)  # 1 where a null move was made
+        self.evals = np.zeros(bb.MAX_PLY, dtype=np.int64)  # static eval per ply on the path
         self.ctrl = np.zeros(CTRL_SIZE, dtype=np.int64)
         self.nodes = 0
         self.score = 0
@@ -168,6 +169,7 @@ class Searcher:
             self.game_keys,
             self.see_gain,
             self.null_flags,
+            self.evals,
         )
 
     def note_root_position(self, board: chess.Board) -> None:
