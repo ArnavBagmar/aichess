@@ -105,10 +105,11 @@ def _lmr_table() -> npt.NDArray[np.int64]:
 LMR_TABLE: Final = _lmr_table()
 
 # Late move pruning: near the leaves, once enough quiet moves have been searched the
-# rest are skipped outright. The count is Stockfish's (3 + depth^2), halved when the
-# static evaluation is not improving, because a worsening line rarely has a late
-# quiet move that saves it.
-LMP_MAX_DEPTH: Final = 8
+# rest are skipped outright. The count is twice Stockfish's (3 + depth^2), because our
+# move ordering has no continuation history behind it, and halved when the static
+# evaluation is not improving, because a worsening line rarely has a late quiet move
+# that saves it.
+LMP_MAX_DEPTH: Final = 6
 
 # History: a bounded record per (from, to) of how often a quiet move caused a cutoff,
 # with gravity so it never exceeds HISTORY_MAX. It orders quiet moves and adjusts the
@@ -116,6 +117,9 @@ LMP_MAX_DEPTH: Final = 8
 HISTORY_MAX: Final = 16384
 HISTORY_BONUS_CAP: Final = 2048
 HISTORY_LMR_DIVISOR: Final = 8192
+# Written over a move's ordering score once it has been searched, so the malus at a
+# cutoff reaches only the quiet moves that were actually tried, not the pruned ones.
+SEARCHED_MARK: Final = -(1 << 40)
 
 # The static evaluation is kept per ply so a node can tell whether it is improving
 # (evaluation above the one two plies ago). NO_EVAL marks plies searched in check.
@@ -123,7 +127,7 @@ NO_EVAL: Final = -3 * MATE
 
 # Internal iterative reductions: a node with no table move at real depth is searched
 # a ply shallower; its own iteration fills the table for the next visit.
-IIR_MIN_DEPTH: Final = 5
+IIR_MIN_DEPTH: Final = 6
 
 # Singular extensions: when the table move's score stands well above every other
 # move at half depth, it is the only move and is searched a ply deeper. When some
@@ -338,7 +342,7 @@ def history_update(history: npt.NDArray[np.int64], move: int, bonus: int) -> Non
 @_jit
 def lmp_limit(depth: int, improving: bool) -> int:
     """Quiet moves searched before late move pruning skips the rest at `depth`."""
-    return (3 + depth * depth) // (1 if improving else 2)
+    return (6 + 2 * depth * depth) // (1 if improving else 2)
 
 
 @_jit
@@ -633,10 +637,12 @@ def search(
         and depth <= RFP_MAX_DEPTH
         and have_static
         and beta < MATE_THRESHOLD
-        and static - RFP_MARGIN * (depth - (1 if improving else 0)) >= beta
+        and static - (RFP_MARGIN * depth - (RFP_MARGIN // 2 if improving else 0)) >= beta
     ):
         # Reverse futility: a static evaluation comfortably above beta is trusted, and
-        # an improving one needs less margin.
+        # an improving one needs half a ply less margin. The margin never reaches zero:
+        # the first version subtracted a whole ply and turned depth-1 nodes into a
+        # stand-pat, which self-play measured at -141 Elo.
         return static
 
     if (
@@ -738,6 +744,7 @@ def search(
             ):
                 continue
         legal += 1
+        scores[ply, i] = SEARCHED_MARK  # this move was searched, not pruned
         update_ply(
             ft_w, ft_b, psqt_w, mailbox, state, ply, move,
             white_acc, black_acc, white_psqt, black_psqt,
@@ -804,7 +811,7 @@ def search(
                 # them down so the next visit finds the cutoff sooner.
                 for j in range(i):
                     earlier = int(moves[ply, j])
-                    if not is_tactical(earlier):
+                    if scores[ply, j] == SEARCHED_MARK and not is_tactical(earlier):
                         history_update(history, earlier, -bonus)
             break
 
