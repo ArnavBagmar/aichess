@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gators Engine</title>
+<meta name="description" content="How an NNUE chess engine written in pure Python reached 300,000 nodes a second on one core, what its six trained networks taught me, and where the strength came from.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  color-scheme: light;
+  --ground: #eef1f4;
+  --surface: #ffffff;
+  --ink: #14202b;
+  --muted: #56687a;
+  --rule: #cbd3da;
+  --teal: #0f6e6b;
+  --amber: #9a5514;
+  --code-bg: #e4e9ee;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0f161d;
+    --surface: #161f28;
+    --ink: #e3eaf0;
+    --muted: #9aaabb;
+    --rule: #26323d;
+    --teal: #4cc2ba;
+    --amber: #e0a054;
+    --code-bg: #1d2832;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0f161d;
+  --surface: #161f28;
+  --ink: #e3eaf0;
+  --muted: #9aaabb;
+  --rule: #26323d;
+  --teal: #4cc2ba;
+  --amber: #e0a054;
+  --code-bg: #1d2832;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+}
+* { box-sizing: border-box; }
+html { background: var(--ground); }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "Public Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--teal); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+.page { max-width: 72ch; margin: 0 auto; padding: 48px 24px 96px; }
+header.masthead { border-bottom: 1px solid var(--rule); padding-bottom: 28px; margin-bottom: 36px; }
+.eyebrow { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin: 0 0 18px; }
+h1 { font-family: "Newsreader", Georgia, "Times New Roman", serif; font-weight: 500; font-size: clamp(34px, 5vw, 46px); line-height: 1.12; margin: 0 0 14px; text-wrap: balance; letter-spacing: -0.01em; }
+.subtitle { font-family: "Newsreader", Georgia, serif; font-style: italic; font-size: 21px; color: var(--muted); margin: 0 0 22px; text-wrap: balance; }
+.byline { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 14px; color: var(--muted); }
+.byline b { color: var(--ink); font-weight: 600; }
+.abstract { background: var(--surface); border: 1px solid var(--rule); padding: 20px 24px; margin: 0 0 40px; border-radius: 4px; }
+.abstract p { margin: 0; }
+.abstract .label { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+nav.toc { font-size: 15px; margin: 0 0 44px; columns: 2; column-gap: 32px; }
+nav.toc ol { margin: 0; padding-left: 22px; }
+nav.toc li { break-inside: avoid; margin: 2px 0; }
+nav.toc a { color: var(--ink); text-decoration: none; }
+nav.toc a:hover { color: var(--teal); text-decoration: underline; }
+h2 { font-family: "Newsreader", Georgia, serif; font-weight: 500; font-size: 29px; line-height: 1.2; margin: 56px 0 14px; text-wrap: balance; }
+h2 .num { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 10px; }
+h3 { font-family: "Public Sans", sans-serif; font-weight: 600; font-size: 17px; margin: 30px 0 8px; }
+p { margin: 0 0 16px; }
+ul, ol { padding-left: 24px; margin: 0 0 16px; }
+li { margin: 4px 0; }
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace; font-size: 0.88em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+.math { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 15px; background: var(--code-bg); padding: 10px 16px; border-radius: 4px; margin: 0 0 18px; overflow-x: auto; white-space: pre; line-height: 1.6; }
+figure { margin: 26px 0 30px; }
+figure .frame { background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 16px 14px 8px; overflow-x: auto; position: relative; }
+figcaption { font-family: "Newsreader", Georgia, serif; font-style: italic; font-size: 15.5px; color: var(--muted); margin-top: 10px; line-height: 1.45; }
+figcaption b { font-style: normal; font-weight: 600; color: var(--ink); }
+.tablewrap { overflow-x: auto; margin: 18px 0 26px; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; font-variant-numeric: tabular-nums; background: var(--surface); }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 600; font-size: 12.5px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+td.n, th.n { text-align: right; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13.5px; white-space: nowrap; }
+tr.hl td { background: color-mix(in srgb, var(--teal) 9%, var(--surface)); }
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 20px 0 26px; }
+.stat { background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 12px 14px; }
+.stat .v { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 24px; font-weight: 500; line-height: 1.1; }
+.stat .k { font-size: 12.5px; color: var(--muted); margin-top: 6px; line-height: 1.3; }
+.footnote { font-size: 14px; color: var(--muted); margin-top: -14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); padding: 4px 6px 0; }
+.legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 7px; background: var(--c); }
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--ground); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; padding: 5px 8px; border-radius: 3px; white-space: nowrap; transform: translate(-50%, -130%); display: none; }
+svg text { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; fill: var(--muted); }
+svg .axis { stroke: var(--rule); stroke-width: 1; }
+svg .grid { stroke: var(--rule); stroke-width: 1; stroke-dasharray: 2 3; }
+svg .lbl { fill: var(--ink); font-size: 12px; }
+.refs { font-size: 15px; }
+.refs li { margin: 8px 0; }
+footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--rule); font-size: 14px; color: var(--muted); }
+@media (max-width: 640px) { nav.toc { columns: 1; } body { font-size: 16px; } .page { padding: 32px 18px 72px; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="masthead">
+  <p class="eyebrow">AI Chessathon 2026 · engineering write-up</p>
+  <h1>Gators: an NNUE chess engine in pure Python, and what training six networks taught me</h1>
+  <p class="subtitle">300,000 nodes a second on one core, six trained evaluation networks, a dozen gated search changes, and the measurement discipline that separated the ideas that worked from the ones that only looked good.</p>
+  <div class="byline">
+    <span><b>Arnav Bagmar</b></span>
+    <span>September 2026</span>
+    <span><a href="https://github.com/ArnavBagmar/aichessathon-starter">Source on GitHub</a></span>
+  </div>
+</header>
+
+<section class="abstract" aria-label="Abstract">
+  <div class="label">Abstract</div>
+  <p>AI Chessathon asks for a single <code>agent.py</code> that plays chess on one CPU core with 2 GB of memory, no network, no GPU, and no existing engine anywhere in the zip. I built an engine for it in the Stockfish shape, from scratch, in Python: a HalfKAv2_hm NNUE evaluation trained on my own GTX 1660 with the open <code>nnue-pytorch</code> trainer, integer inference that reproduces the trainer bit-for-bit, and an alpha-beta search compiled by numba over bitboards. The search went from about 22,000 nodes a second on python-chess to roughly 300,000 on hand-written bitboard kernels, and completes depth 13 to 17 in a 3.7 second move where it used to complete 4 to 7. Six networks were trained on 53 billion position samples in total; only two of them were worth shipping, and the reason the others were not is the most useful thing in this write-up. Every search change was accepted or rejected by a self-play sequential probability ratio test, the way Stockfish's own fishtest works, and that discipline caught one change that would have cost 141 Elo. The engine scored 90% in its first ten rated games on the platform.</p>
+</section>
+
+<nav class="toc" aria-label="Contents">
+<ol>
+  <li><a href="#setting">The problem the competition sets</a></li>
+  <li><a href="#stockfish">Learning from Stockfish without shipping it</a></li>
+  <li><a href="#evaluation">The evaluation: an NNUE in integers</a></li>
+  <li><a href="#training">Training six networks on one consumer GPU</a></li>
+  <li><a href="#search">The search: from python-chess to numba bitboards</a></li>
+  <li><a href="#nodes">The node arithmetic</a></li>
+  <li><a href="#measurement">Measuring honestly</a></li>
+  <li><a href="#rated">What the rated games showed</a></li>
+  <li><a href="#transformer">A transformer spike, and why it stayed a spike</a></li>
+  <li><a href="#hardware">Hardware and budgets</a></li>
+  <li><a href="#lineage">The agents that were uploaded</a></li>
+  <li><a href="#next">What I would do next</a></li>
+  <li><a href="#refs">References</a></li>
+</ol>
+</nav>
+
+<h2 id="setting"><span class="num">1</span>The problem the competition sets</h2>
+<p>The contract is small. The platform imports <code>agent.py</code>, calls <code>get_move(fen, time_left_ms)</code>, and expects a UCI move back. The process lives for one game. Import time gets its own 60 second budget, after which the clock runs: 120 seconds per side plus half a second a move, measured on wall time. An illegal move, a crash, running out of memory, or a flag loses the game outright.</p>
+<p>The constraints are what make it an engineering problem rather than a chess one:</p>
+<ul>
+  <li><b>One core, 2 GB, no GPU, no network.</b> Everything the engine needs ships in a zip under 50 MB.</li>
+  <li><b>No engines.</b> Stockfish, Lc0, Maia, or anything embedding them is an instant disqualification, checked after the fact. Training on engine-annotated data is explicitly allowed; the ban is on what runs inside the zip.</li>
+  <li><b>No native binaries.</b> Python source only. Model weights are fine. Cython does not work; numba does, but every kernel compiles at import, inside the 60 seconds.</li>
+  <li><b>A fixed environment.</b> torch 2.13 (CPU), numpy 2.5, python-chess 1.11, onnxruntime 1.29, numba 0.67, and nothing else.</li>
+  <li><b>Rated games start from curated openings</b>, not the standard position, so an opening book is worth little.</li>
+</ul>
+<p>The starter kit came with a legal random mover and a local harness that mirrors the platform's protocol and clock. Everything from there was mine to build, and the question I set myself was: how much of the Stockfish design can be rebuilt in Python, under these limits, in a week and a half?</p>
+
+<h2 id="stockfish"><span class="num">2</span>Learning from Stockfish without shipping it</h2>
+<p>Stockfish is open source, and its repository and the companion trainer are the best textbook on modern engine design that exists. I read both closely, and the rules draw a line I kept to: study the ideas, re-implement them from the published descriptions on the Chess Programming Wiki, and never paste source. Pasting would be a rules violation and a GPL problem in one.</p>
+<p>What I took from the <a href="https://github.com/official-stockfish/Stockfish">Stockfish repository</a> and from <a href="https://github.com/official-stockfish/nnue-pytorch">nnue-pytorch</a>:</p>
+<ul>
+  <li><b>The evaluation architecture.</b> HalfKAv2_hm features, king buckets, layer-stack buckets by piece count, and the exact integer quantisation pipeline the engine runs at inference. The trainer's <code>quantize.py</code> and <code>config.py</code> are the specification; my <code>nnue_arch.py</code> is a transcription of those constants with a comment per line saying which unit each layer produces.</li>
+  <li><b>The search toolkit.</b> Principal variation search, aspiration windows, null-move pruning with depth-adaptive reduction, late move reductions on a logarithmic table, late move pruning, reverse futility, static exchange evaluation, singular extensions with multi-cut, history with gravity and malus, an improving flag, internal iterative reductions. Each is a published idea. What Stockfish taught me is not the idea but the <em>sizing</em>: every margin is a number tuned by games, and copying a margin across without re-tuning it is how I lost 141 Elo once (section 5).</li>
+  <li><b>The training recipe.</b> The master-net commits document their flags: a lambda schedule that blends game results into the target late in training, early-fen skipping, a low learning rate, resuming from the previous net. I tried all of them (section 4). They did less than I expected, and finding out why was the point.</li>
+  <li><b>The method.</b> Stockfish accepts nothing without a self-play SPRT on fishtest. I built a small fishtest of my own and every search commit went through it. That turned out to be the single most valuable thing I copied.</li>
+</ul>
+<p>Stockfish itself never ran inside the submission. It lived outside the repository as a sparring partner for the benchmark, and the packaging script only ever picks up root-level Python and the weights directory, so it could not reach the zip by accident.</p>
+
+<h2 id="evaluation"><span class="num">3</span>The evaluation: an NNUE in integers</h2>
+<p>An NNUE is a small fully connected network designed to be updated incrementally as pieces move. The first layer is enormous and sparse; everything after it is tiny. The network I ship is the nnue-pytorch master architecture restricted to the HalfKAv2_hm feature set and sized down to a 256-wide first layer.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Layer</th><th class="n">Shape</th><th>Weights</th><th>Units after quantisation</th></tr></thead>
+<tbody>
+<tr><td>Feature transformer</td><td class="n">24,576 × 256</td><td>int16</td><td>1/256 pawn; accumulated per perspective</td></tr>
+<tr><td>PSQT columns</td><td class="n">24,576 × 8</td><td>int32</td><td>1/9600 pawn, one column per piece-count bucket</td></tr>
+<tr><td>Pairwise clipped product</td><td class="n">256 → 128 per side</td><td>—</td><td>0…127, shift by 9</td></tr>
+<tr><td>Layer 1 (8 buckets)</td><td class="n">256 × 32</td><td>int8</td><td>squared and linear paths, both clipped to 0…127</td></tr>
+<tr><td>Layer 2 (8 buckets)</td><td class="n">64 × 32</td><td>int8</td><td>same shape of activation</td></tr>
+<tr><td>Output (8 buckets)</td><td class="n">128 × 1</td><td>int8</td><td>1/16384, then scaled to 1/32 centipawn</td></tr>
+</tbody>
+</table>
+</div>
+<p>The feature index is <span class="mono">king_bucket × 768 + piece_type × 64 + square</span>: 32 king buckets (the board is mirrored so the king is always on the left half) times 12 piece planes times 64 squares. A position activates at most 32 features per perspective, so evaluating a position from scratch is 32 row-adds of 256 int16 values, and evaluating it after a move is two to four row-adds and subtracts, unless the king moved, in which case that side's accumulator is rebuilt.</p>
+<p>The rest of the forward pass is about ten thousand integer multiply-adds: 256 × 32 for the first hidden layer, 64 × 32 for the second, 128 for the output. Measured after the int32 rewrite, a full evaluation costs 1.6 microseconds on a Ryzen 5 3600. Move generation, make-move and the accumulator update take most of the remaining 2 microseconds of a node.</p>
+<p>Two things about the integer pipeline mattered more than I expected:</p>
+<ul>
+  <li><b>Bit-exactness is checkable, so check it.</b> The exporter reads a Lightning checkpoint, merges the trainer's factorised feature weights, applies the quantisation scales and writes an <code>.npz</code>. A separate script then runs the trainer's own float forward pass (with quantisation epsilon disabled) on 300 random positions and compares against my integer kernels. Every shipped net passed at a maximum difference of 0.00 centipawns.</li>
+  <li><b>Accumulate in int32, not int64.</b> The first version summed the hidden layers in int64. Numba could not vectorise it, and evaluation cost 3.8 of a node's 5.7 microseconds. Switching the sums to int32 let it use SIMD and dropped evaluation to 1.6 µs, taking the whole search from 176 to 236 thousand nodes a second. Same answers, bit for bit, a third more search.</li>
+</ul>
+<p>Scores inside the search are integers in 1/32 of a centipawn, positive for the side to move, with mate at one million. Keeping the net's native unit rather than rounding to centipawns costs nothing and means every pruning margin is expressed on the same scale the net was trained on.</p>
+
+<h2 id="training"><span class="num">4</span>Training six networks on one consumer GPU</h2>
+<p>All training used the open <code>nnue-pytorch</code> trainer, unmodified, with its C++ data loader built under MinGW because its CMake file passes flags MSVC does not understand. The data is public: the <code>test80</code> and <code>test77</code> binpacks published by the Stockfish community on Hugging Face, which are positions from Stockfish self-play labelled with Stockfish's own search score and the game result. Eight shards, 99 GB decompressed, on a spare drive. Training on engine-labelled data is explicitly allowed; what ships is the network I trained on it.</p>
+
+<div class="stat-row">
+  <div class="stat"><div class="v">6</div><div class="k">networks trained</div></div>
+  <div class="stat"><div class="v">53 B</div><div class="k">position samples processed across all runs</div></div>
+  <div class="stat"><div class="v">313 k/s</div><div class="k">positions per second on the GTX 1660</div></div>
+  <div class="stat"><div class="v">2</div><div class="k">networks that were worth shipping</div></div>
+</div>
+
+<p>An epoch in this trainer is 100 million positions, which takes about five and a half minutes when the GPU has the machine to itself and up to seventeen when the CPU is also playing gate games. The card has no tensor cores, so fp16 autocast was measured slower than fp32 and left off. Past four loader workers the GPU is the bottleneck, not the loader.</p>
+
+<figure>
+  <div class="frame" id="fig-loss"></div>
+  <figcaption><b>Figure 1.</b> Training loss per epoch for the four comparable runs (pure evaluation targets; net4 used result-blended targets and its loss is on a different scale). The dashed segment continues net1 to epoch 150. Lower loss did not mean a stronger engine: net2's loss sits above net1's because it trains on a broader data mix, and net2 is the stronger net; net1 at epoch 150 has the lowest loss of its family and lost to its own epoch 108. Hover for values.</figcaption>
+</figure>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Net</th><th class="n">Width</th><th>Data</th><th class="n">Epochs</th><th class="n">Final loss</th><th>Recipe</th><th>Self-play result on identical code</th></tr></thead>
+<tbody>
+<tr><td>net1 (epoch 108)</td><td class="n">256</td><td>2 shards</td><td class="n">108</td><td class="n">0.00483</td><td>trainer defaults, gamma scaled to 150 epochs</td><td>first shipped net; baseline</td></tr>
+<tr><td>net1 (epoch 150)</td><td class="n">256</td><td>2 shards</td><td class="n">150</td><td class="n">0.00479</td><td>same run, finished</td><td><b>−30 Elo</b> vs epoch 108 (200 games)</td></tr>
+<tr class="hl"><td>net2</td><td class="n">256</td><td>6 shards</td><td class="n">150</td><td class="n">0.00497</td><td>from scratch, same schedule</td><td><b>≈ +50 Elo</b> vs epoch 108; shipped as "Gators"</td></tr>
+<tr><td>net3</td><td class="n">512</td><td>8 shards</td><td class="n">120</td><td class="n">0.00453</td><td>from scratch, wider</td><td><b>−3 Elo</b> vs net2: eval gain exactly paid for a third fewer nodes</td></tr>
+<tr><td>net4</td><td class="n">256</td><td>8 shards</td><td class="n">60</td><td class="n">0.00679*</td><td>resume from net2, lambda 1.0→0.75, early-fen skip 16, lr 4.375e-4</td><td><b>+5 Elo</b> vs net2 (200 games), neutral</td></tr>
+<tr class="hl"><td>net5</td><td class="n">256</td><td>8 shards</td><td class="n">54</td><td class="n">0.00509</td><td>resume from net2, early-fen 18 / soft 32 / random 10, lambda 1.0</td><td><b>≈ +20 Elo</b> vs net2 (126 games); the latest build</td></tr>
+</tbody>
+</table>
+</div>
+<p class="footnote">* result-blended targets; not comparable with the other rows.</p>
+
+<h3>What the six runs actually taught me</h3>
+<ul>
+  <li><b>More epochs on the same data lowers loss and lowers strength.</b> Epoch 150 of net1 beat epoch 108 on the loss curve and lost to it by 30 Elo over 200 games. The net was fitting the two shards it had seen, not chess. This is the cleanest demonstration I have that the loss is a proxy and games are the measurement.</li>
+  <li><b>Data breadth beat everything else.</b> Going from two shards to six (net2) was the only training change that produced a clear gain. The recipe flags from the Stockfish master nets (net4) and a wider first layer (net3) did not move the rating on this data. Stockfish's own recipe trains on 42 shards, 700 GB, relabelled with a stronger evaluator; the recipe is designed for that regime and my runs were data-starved by two orders of magnitude.</li>
+  <li><b>A wider net is not free at this speed.</b> net3's 512-wide feature transformer costs a third of the nodes (168 versus 251 thousand a second), and the better evaluation exactly paid for the lost depth: −3 Elo, inside the noise. The lever that would have made it worth it, more and better data, was the one I did not have time for.</li>
+  <li><b>The failure the nets share is not about the schedule.</b> Both net2 and net5 misjudge king-and-pawn endings by a full rook (a position Stockfish scores at −14.5 pawns, they score at −3) and they under-value promotion when a pawn on the seventh rank is already "worth" a queen to them. Diagnosed from the rated games (section 8), reproduced locally, unchanged by net4 and net5. The fix is training data with those positions in it, deep-labelled, not another pass over test80.</li>
+  <li><b>Scale the learning-rate schedule to the run you can afford.</b> The trainer's default gamma is sized for 400 epochs; stopping a 400-epoch schedule at 150 leaves the learning rate at 10% of initial instead of 4%. I set <span class="mono">gamma = 0.04^(1/epochs)</span> per run, which is the kind of thing the recipe assumes you know.</li>
+</ul>
+
+<h2 id="search"><span class="num">5</span>The search: from python-chess to numba bitboards</h2>
+<p>The engine went through three search implementations, each measured before the next one was started.</p>
+
+<figure>
+  <div class="frame" id="fig-nps"></div>
+  <figcaption><b>Figure 2.</b> Nodes per second on the four fixed profile positions, one core of a Ryzen 5 3600. The first bar is the python-chess search after null-move and LMR. The two middle bars are the int32 change measured on the same day with the GPU trainer sharing the machine, which is why both sit below the quiet-box gate above them. The last is today's build, measured for this write-up.</figcaption>
+</figure>
+
+<h3>Phase one: python-chess and a dict</h3>
+<p>The first search was negamax with alpha-beta over python-chess boards, iterative deepening, a transposition table keyed on the board's transposition key, MVV-LVA plus killers plus history for ordering, quiescence, and a budget derived from the clock. It reached about 22,000 nodes a second and depth 4 to 7 at a tournament budget. A profile of one four-second middlegame search was unambiguous: hundreds of thousands of calls into python-chess for move generation and make-move, 38% of the time in the accumulator-update glue, and the evaluation itself at 4%. Evaluation was nearly free; the board was not.</p>
+
+<h3>Phase two: the pruning set, one commit at a time</h3>
+<p>Before rewriting the board I landed the standard pruning techniques on the slow search, because each buys effective plies without buying nodes: PVS, aspiration windows, check extensions, reverse futility, delta pruning in quiescence, static exchange evaluation for capture ordering and quiescence, a fix for mate scores in the table (they must be stored relative to the node and converted on probe), and a clock check every 256 nodes. Staged move generation was measured speed-neutral and dropped. Each change was one commit gated by self-play against a worktree of the previous commit.</p>
+
+<h3>Phase three: everything inside numba</h3>
+<p>The rewrite replaced python-chess inside the search with numba <code>nopython</code> kernels: bitboard representation with copy-make and Zobrist keys (<code>bitboard.py</code>, 712 lines), accumulators and the integer forward pass over those bitboards (<code>nnue_bitboard.py</code>), and one recursive alpha-beta kernel with quiescence as its <code>depth ≤ 0</code> branch (<code>search_kernel.py</code>, 838 lines). python-chess is used only at the root, to parse the FEN and to confirm the kernel's move is legal before it is returned. The Python root (<code>search.py</code>) owns every array the kernel touches: the 2<sup>20</sup>-entry transposition table, killers, history, the move stacks, the game's position keys.</p>
+<p>The port was deliberately algorithm-preserving, so the first gate measured speed alone: 184 to 303 thousand nodes a second against 13 to 22, ten to fourteen times faster, and +512 Elo in self-play against the python-chess build (18 wins, 2 draws, no losses at 10 s + 0.5 s). Perft and a 200-game differential test agreed with python-chess move for move, and the evaluation was bit-exact with the old engine.</p>
+<p>Three things about numba were worth learning the hard way:</p>
+<ul>
+  <li><b>It compiles a separate specialisation of a kernel for every distinct literal argument at a call site.</b> Calling the search kernel with <code>True</code> at one site and <code>False</code> at another compiled it three times, 31 seconds of the 60-second import budget. The fix was to derive every flag from a value and keep null-move permission in a per-ply array. Import on the platform's core is now about 20 seconds.</li>
+  <li><b>Reading the clock from inside a kernel costs 0.8 µs via <code>objmode</code></b>, invisible when checked every 4,096 nodes, and it keeps the time control in the kernel rather than forcing a return to Python.</li>
+  <li><b>Self-recursion works.</b> numba 0.67 resolves a recursive <code>@njit</code> function from its non-recursive base case, so quiescence can be a branch of the same kernel rather than a second function.</li>
+</ul>
+
+<h3>Phase four: retuning for the new depths</h3>
+<p>A search that reaches depth 9 needs different margins from one that reaches depth 5. This phase added, in gated order: soft and hard time budgets with an instability extension; a move-number horizon so the middlegame gets more time than a fixed divisor gives it; log-shaped LMR, late move pruning, frontier futility; a fifty-move fade and a mop-up term around the net's score so won endings get converted; bounded check extensions (only when SEE ≥ 0 and inside twice the root depth) and a depth-adaptive null-move reduction; then a second wave of an improving flag, bounded history with gravity and malus feeding into LMR, singular extensions with multi-cut, and the int32 forward pass.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Change</th><th class="n">Games</th><th class="n">Score</th><th class="n">Elo (±1 SE)</th><th>Verdict</th></tr></thead>
+<tbody>
+<tr><td>numba bitboard engine vs python-chess</td><td class="n">20</td><td class="n">+18 =2 −0</td><td class="n">+512 (+414…+720)</td><td>accepted</td></tr>
+<tr><td>time management (30 s + 0.5 s)</td><td class="n">120</td><td class="n">+36 =60 −24</td><td class="n">+35 (+12…+58)</td><td>kept</td></tr>
+<tr><td>fifty-move fade + mop-up</td><td class="n">200</td><td class="n">+52 =97 −51</td><td class="n">+2 (−16…+19)</td><td>kept: fixes a demonstrated promotion stall</td></tr>
+<tr><td>bounded check extension, adaptive null-move</td><td class="n">200</td><td class="n">+65 =97 −38</td><td class="n">+47 (+30…+65)</td><td>accepted</td></tr>
+<tr><td>improving flag alone, Stockfish margins verbatim</td><td class="n">—</td><td class="n">—</td><td class="n">−141</td><td><b>rejected</b>, then fixed</td></tr>
+<tr class="hl"><td>second wave: improving + history + singular + int32</td><td class="n">60</td><td class="n">+22 =35 −3</td><td class="n">+116 (+89…+145)</td><td>SPRT accepted at 30 pairs</td></tr>
+</tbody>
+</table>
+</div>
+<p>The rejected row is the lesson. The improving flag reduces the reverse-futility margin by one ply when the position is getting better, exactly as Stockfish does. At depth 1 that took my margin to zero, so the engine pruned every quiet move at the frontier whenever it thought it was improving, and Stockfish's move-count limits, sized for its move ordering, were too tight for mine. Half a ply of margin and a looser move-count formula turned −141 into part of a +116 wave. The technique was right; the numbers were somebody else's.</p>
+
+<h2 id="nodes"><span class="num">6</span>The node arithmetic</h2>
+<p>This is the part of the project I would put on a whiteboard first. Chess has about 35 legal moves in a typical position. A plain minimax search to depth <em>d</em> visits roughly 35<sup>d</sup> leaves; alpha-beta with perfect move ordering visits about 35<sup>d/2</sup>. The whole engineering of a chess engine is about closing the gap between those two numbers and then buying more depth with the nodes that remain.</p>
+<div class="math">minimax:     nodes ≈ b^d           (b ≈ 35)
+alpha-beta:  nodes ≈ b^(d/2)       with perfect ordering
+measured:    EBF   = nodes^(1/d)   the effective branching factor</div>
+<p>The engine's budget on the platform is set by the clock. With 120 seconds plus half a second a move and a planning horizon of 40 moves that shrinks with the move number, it spends about 3.7 seconds per move through move 30, which at 300,000 nodes a second is about a million nodes. That budget is where the depth comes from.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th class="n">Depth</th><th class="n">Minimax 35<sup>d</sup></th><th class="n">Alpha-beta 35<sup>d/2</sup></th><th>Reachable at one million nodes?</th></tr></thead>
+<tbody>
+<tr><td class="n">4</td><td class="n">1.5 million</td><td class="n">1,225</td><td>yes, either way</td></tr>
+<tr><td class="n">6</td><td class="n">1.8 billion</td><td class="n">42,875</td><td>only with alpha-beta</td></tr>
+<tr><td class="n">8</td><td class="n">2.3 trillion</td><td class="n">1.5 million</td><td>at the edge, with good ordering</td></tr>
+<tr><td class="n">10</td><td class="n">2.8 × 10<sup>15</sup></td><td class="n">52.5 million</td><td>only with pruning that skips whole subtrees</td></tr>
+<tr><td class="n">12</td><td class="n">3.4 × 10<sup>18</sup></td><td class="n">1.8 billion</td><td>same</td></tr>
+</tbody>
+</table>
+</div>
+<p>The engine completes depth 13 to 17 in a 3.7 second move. Reading the table, that is far past what alpha-beta alone allows: null-move pruning, late move reductions, futility and the rest are what make the measured effective branching factor land well under the square root of 35. The live demo shows this per move: the ratio of nodes between one completed depth and the next is the branching factor the search actually experienced.</p>
+<p>Measured for this write-up, with a fixed 3.7 second think on the four profile positions, one core of the Ryzen 5 3600 (the platform's EPYC core is somewhat slower):</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Position</th><th class="n">Depth completed</th><th class="n">Nodes</th><th class="n">knps</th><th class="n">EBF = nodes<sup>1/d</sup></th></tr></thead>
+<tbody>
+<tr><td>opening (after 2…Nc6)</td><td class="n">13</td><td class="n">625,032</td><td class="n">≈ 280</td><td class="n">2.79</td></tr>
+<tr><td>middlegame</td><td class="n">14</td><td class="n">668,526</td><td class="n">279</td><td class="n">2.61</td></tr>
+<tr><td>tactical</td><td class="n">17</td><td class="n">968,352</td><td class="n">292</td><td class="n">2.25</td></tr>
+<tr><td>king-and-pawn ending</td><td class="n">24</td><td class="n">1,241,194</td><td class="n">352</td><td class="n">1.79</td></tr>
+</tbody>
+</table>
+</div>
+<p>The per-depth trace of the middlegame search shows what the arithmetic looks like in practice. Node counts are cumulative; the ratio column is the growth from the previous depth, which is the branching factor that depth actually cost. Iterative deepening with a transposition table makes most iterations cheap (ratios near 1.2 to 1.7, because the previous iteration's best move is tried first and usually holds); the expensive iterations are the ones where the search changed its mind and had to re-search a widened aspiration window.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th class="n">Depth</th><th class="n">Nodes</th><th class="n">Ratio</th><th class="n">Score</th><th class="n">Time</th></tr></thead>
+<tbody>
+<tr><td class="n">4</td><td class="n">1,861</td><td class="n">1.74</td><td class="n">+160</td><td class="n">0.02 s</td></tr>
+<tr><td class="n">6</td><td class="n">14,423</td><td class="n">4.77</td><td class="n">+28</td><td class="n">0.05 s</td></tr>
+<tr><td class="n">8</td><td class="n">46,129</td><td class="n">1.97</td><td class="n">+19</td><td class="n">0.17 s</td></tr>
+<tr><td class="n">10</td><td class="n">87,086</td><td class="n">1.44</td><td class="n">+8</td><td class="n">0.33 s</td></tr>
+<tr><td class="n">12</td><td class="n">117,100</td><td class="n">1.16</td><td class="n">+8</td><td class="n">0.42 s</td></tr>
+<tr><td class="n">13</td><td class="n">394,745</td><td class="n">3.37</td><td class="n">+26</td><td class="n">1.42 s</td></tr>
+<tr><td class="n">14</td><td class="n">668,526</td><td class="n">1.69</td><td class="n">+42</td><td class="n">2.41 s</td></tr>
+</tbody>
+</table>
+</div>
+<p>Depth 14 for 668 thousand nodes is an effective branching factor of 2.6, against 35 for the raw tree and 5.9 for ideal alpha-beta. That number, more than any single technique, is the summary of the search work: each pruning idea in section 5 lowered it, and the gate measured whether lowering it that particular way was worth the positions it stopped looking at.</p>
+<p>Two more numbers frame the node budget. The transposition table is 2<sup>20</sup> entries of a 64-bit key and a 64-bit packed record (score in the high 32 bits; move, depth, bound and generation below), 16 MB, well inside the 2 GB. And a mate score is one million minus the distance in plies, stored relative to the node and converted on probe, so that a mate found at ply 6 from one root is still the shortest mate when it is read back at ply 2 from the next.</p>
+
+<h2 id="measurement"><span class="num">7</span>Measuring honestly</h2>
+<p>The first rating I measured was wrong, and the way it was wrong shaped the rest of the project. Stockfish's <code>UCI_LimitStrength</code> caps its search rather than scaling with the clock, so at 120 s + 0.5 s the engine scored 75 to 81% against Stockfish set to 1900, 2200 and 2500 alike. Three settings 600 Elo apart cannot all be beaten at the same rate; the dial is calibrated for fast games. I stopped quoting an Elo from it.</p>
+<p>What replaced it:</p>
+<ul>
+  <li><b>Full-strength Stockfish capped by nodes per move</b> (1k, 4k, 16k, 64k), which is monotonic and does not collapse at long time controls, as a yardstick for large changes.</li>
+  <li><b>Self-play SPRT for every search change.</b> A worktree per commit, the new build against the previous one, alternating colours, 10 s + 0.5 s, the sequential probability ratio test on the hypotheses [0, 20] Elo. The bench plays through the harness's real referee, so the clock, flag-fall and illegal-move rules are the platform's. I calibrated it first: HEAD against HEAD stayed undecided over 100 games, as it must.</li>
+  <li><b>Physical cores only.</b> The referee measures wall time, so with 6 physical cores I never ran more than 3 games at once, and I verified the per-pair slowdown at 3 workers was 7%. Oversubscribing the box makes the agent look weaker, and the one time three workers ran alongside the GPU trainer's loader processes the machine ran out of memory and every game became a void that the bench tallied as a draw. A run of all draws means init failures, not equal play.</li>
+</ul>
+<p>The node-capped ladder still could not separate builds near the top: at 10 s + 0.5 s three different builds all scored 55 to 58% against Stockfish at its 3000 setting. Self-play SPRT is the measurement that resolves 30 Elo; nothing else I had does.</p>
+
+<h2 id="rated"><span class="num">8</span>What the rated games showed</h2>
+<p>Two builds played on the platform under two names. "Something" was the first bitboard build with the epoch-108 net; "Gators" was the retuned search with net2. I annotated 42 rated games with Stockfish at depth 18 and a refutation-depth ladder on every mistake of ours.</p>
+<div class="stat-row">
+  <div class="stat"><div class="v">58%</div><div class="k">Something, 26 games (12 wins, 6 draws, 8 losses)</div></div>
+  <div class="stat"><div class="v">90%</div><div class="k">Gators, first 10 games (8 wins, 2 draws, 0 losses)</div></div>
+  <div class="stat"><div class="v">15.8</div><div class="k">Gators' average centipawn loss per move</div></div>
+  <div class="stat"><div class="v">52%</div><div class="k">of our mistakes refuted by Stockfish at depth ≤ 4</div></div>
+</div>
+<p>Three patterns came out of the annotation and each turned into a change:</p>
+<ul>
+  <li><b>Losses were middlegame slides around our own king.</b> Every loss against a strong opponent had the same shape: a pawn grab or pawn push that opened lines toward our king, scored as fine by the net and refuted by Stockfish at shallow depth. That is evaluation knowledge, specifically king safety, and it is the reason the next network needs different data rather than a different schedule.</li>
+  <li><b>Won endgames stalled.</b> One game reached halfmove 96, four plies from a fifty-move draw, in a won rook ending. The cause was measurable: the net scored keeping a pawn on b2 at +20 pawns and the position after promoting and trading at +16.5, so the search never promoted. The fifty-move fade and mop-up term fixed the demonstrated position, and the bounded check extension let rook endings search deeper than 7 to 10 plies.</li>
+  <li><b>The clock was under-used by about 25%.</b> Both builds finished games with 23 seconds unused, and the mistakes were made on moves given 1.5 seconds against a mean of 2.1. The move-number horizon spends that time in the middlegame where the errors were.</li>
+</ul>
+<p>One platform rule was only visible from the games: it ends a game as soon as the side to move <em>could</em> claim a threefold repetition. My engine recorded positions it was asked about but not the positions its own moves created, so it shuffled through them until a claim opened on its own turn. Six rated draws from winning positions, fixed with one method that records the position after our move.</p>
+
+<h2 id="transformer"><span class="num">9</span>A transformer spike, and why it stayed a spike</h2>
+<p>I measured whether a Chessformer-style transformer could play any role under the constraints. On one core with torch 2.13 and onnxruntime 1.29, a 1.9 million parameter model (d128, 4 layers) evaluates 250 to 320 positions a second; the paper's 6 million parameter class manages 75 to 90. The alpha-beta search evaluates 300,000. A transformer therefore cannot be the leaf evaluation; it is 1,000 times too slow. On the training side the GTX 1660 manages 5,200 samples a second for the smallest model, which is about 450 million samples a day against the 5 billion the paper's smallest model used on an A100.</p>
+<p>The one shape that fits is a policy prior at the root and first ply, ordering moves for the search at a few percent of the move budget. That is a real idea for a later version, but the numba rewrite was the surer and larger win, so the transformer stayed on its own branch.</p>
+
+<h2 id="hardware"><span class="num">10</span>Hardware and budgets</h2>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Where</th><th>Compute</th><th>Memory</th><th>Used for</th></tr></thead>
+<tbody>
+<tr><td>Training</td><td>NVIDIA GTX 1660, 6 GB, no tensor cores</td><td>16 GB host</td><td>six nnue-pytorch runs, 313k positions/s at fp32; fp16 measured slower</td></tr>
+<tr><td>Local bench</td><td>AMD Ryzen 5 3600, 6 cores / 12 threads</td><td>16 GB</td><td>SPRT gates at 3 concurrent games, one core per side, while the GPU trained</td></tr>
+<tr><td>Data</td><td>—</td><td>99 GB on a spare drive</td><td>8 test80/test77 binpacks</td></tr>
+<tr><td>Platform</td><td>one core of an AMD EPYC 9V74 at 2.6 GHz, no GPU</td><td>2 GB, 256 MB writable at /tmp</td><td>60 s import, then 120 s + 0.5 s/move wall clock</td></tr>
+</tbody>
+</table>
+</div>
+<p>The budgets that shaped the design: 60 seconds of import for weights and numba compilation (the engine uses about 20 on the platform's core, 23 to 29 locally under load); 7 MB of weights against 50 MB of zip; 16 MB of transposition table against 2 GB; and the fact that the process is suspended while the opponent thinks, so nothing can be gained by pondering.</p>
+
+<h2 id="lineage"><span class="num">11</span>The agents that were uploaded</h2>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Build</th><th>Search</th><th>Net</th><th>What it added</th></tr></thead>
+<tbody>
+<tr><td>python-chess build</td><td>phase 1–2</td><td>net1 epoch 108</td><td>first upload; rounds 13–24; drew won positions to the repetition rule</td></tr>
+<tr><td>Something</td><td>bitboard engine</td><td>net1 epoch 108</td><td>numba kernels, repetition fix; 58% over 26 rated games</td></tr>
+<tr><td>Gators</td><td>+ time budgets, LMR/LMP/futility</td><td>net2</td><td>90% over its first 10 rated games</td></tr>
+<tr><td>v3</td><td>+ eval shaping, bounded extensions</td><td>net2</td><td>+35, +2, +47 Elo gated over Gators</td></tr>
+<tr><td>v4</td><td>+ improving, history, singular, int32</td><td>net2</td><td>+116 gated over v3; about +200 in total over Gators</td></tr>
+<tr><td>v5</td><td>same as v4</td><td>net5</td><td>about +20 over v4 on identical code</td></tr>
+</tbody>
+</table>
+</div>
+<p>v4 and v5 are the two engines in the playable demo linked from the <a href="https://github.com/ArnavBagmar/aichessathon-starter">repository</a>: same search, two different networks, so a game against each is a controlled comparison of the nets.</p>
+
+<h2 id="next"><span class="num">12</span>What I would do next</h2>
+<ol>
+  <li><b>Data, not schedule.</b> Build a training set heavy in king-attack middlegames and pawn endings, including the positions from our own lost games, labelled by deep search, and fine-tune net2 on it. Every diagnosis in sections 4 and 8 points here.</li>
+  <li><b>The rest of the Stockfish search list</b>, each through the gate: razoring, ProbCut, correction history, continuation history, a shallower TT cutoff at non-PV nodes, negative extensions.</li>
+  <li><b>Speed.</b> Move scoring costs 0.67 µs a call and about 1.4 µs a node is unaccounted overhead in the kernel; both are targets before the evaluation is.</li>
+  <li><b>A policy prior at the root</b> from the small transformer, capped at a few percent of the move budget.</li>
+</ol>
+
+<h2 id="refs"><span class="num">13</span>References</h2>
+<ol class="refs">
+  <li>Stockfish. <a href="https://github.com/official-stockfish/Stockfish">github.com/official-stockfish/Stockfish</a>. Read for the search and NNUE design; nothing from it ships in the submission.</li>
+  <li>nnue-pytorch, the Stockfish network trainer. <a href="https://github.com/official-stockfish/nnue-pytorch">github.com/official-stockfish/nnue-pytorch</a>. Used unmodified to train every net; its quantisation config is the specification my inference reproduces.</li>
+  <li>Chess Programming Wiki. <a href="https://www.chessprogramming.org">chessprogramming.org</a>. Alpha-beta, PVS, null-move, LMR, SEE, aspiration windows, SPRT.</li>
+  <li>Training data: the <code>test80</code> and <code>test77</code> binpacks published by linrock on Hugging Face (<a href="https://huggingface.co/datasets/linrock/test80-2023">test80-2023</a>, <a href="https://huggingface.co/datasets/linrock/test80-2024">test80-2024</a>).</li>
+  <li>Monroe, D. and Chalmers, P. (2024). <em>Mastering Chess with a Transformer Model</em>. <a href="https://arxiv.org/abs/2409.12272">arXiv:2409.12272</a>.</li>
+  <li>python-chess. <a href="https://github.com/niklasf/python-chess">github.com/niklasf/python-chess</a>. Root-level FEN parsing and legality checks, and the reference for the differential tests.</li>
+  <li>numba. <a href="https://numba.pydata.org">numba.pydata.org</a>.</li>
+  <li>AI Chessathon rules and agent contract. <a href="https://aichessathon.com/docs">aichessathon.com/docs</a>.</li>
+</ol>
+
+<footer>
+  <p>Written from the project's commit history, gate logs and training logs. The self-play numbers are one-standard-error bands from games played through the competition harness's referee; the platform results are from the annotated rated games available at the time of writing. Built with Claude Code as a pair programmer for the implementation and the gate automation; the design decisions, the measurements and the mistakes are mine.</p>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  const fmt = (v) => v.toFixed(5);
+
+  // Figure 1: loss curves. Values are train_loss_epoch from the trainer logs.
+  const runs = [
+    { name: "net1 · 2 shards", color: "--series-1", pts: [[10,0.00552],[20,0.00525],[30,0.00512],[40,0.00503],[50,0.00497],[60,0.00493],[70,0.00490],[80,0.00487],[90,0.00485],[100,0.00483],[108,0.00483]] },
+    { name: "net1 continued", color: "--series-1", dashed: true, pts: [[108,0.00483],[110,0.00483],[120,0.00481],[130,0.00481],[140,0.00480],[149,0.00479]] },
+    { name: "net2 · 6 shards", color: "--series-2", pts: [[10,0.00568],[20,0.00542],[30,0.00528],[40,0.00520],[50,0.00514],[60,0.00509],[70,0.00506],[80,0.00504],[90,0.00502],[100,0.00500],[110,0.00500],[120,0.00499],[130,0.00498],[140,0.00497],[149,0.00497]] },
+    { name: "net3 · 8 shards, width 512", color: "--series-3", pts: [[10,0.00524],[20,0.00495],[30,0.00480],[40,0.00471],[50,0.00466],[60,0.00462],[70,0.00459],[80,0.00456],[90,0.00455],[100,0.00454],[110,0.00453],[119,0.00453]] },
+    { name: "net5 · resume from net2", color: "--series-4", pts: [[10,0.00522],[20,0.00516],[30,0.00513],[40,0.00511],[50,0.00510],[54,0.00509]] },
+  ];
+  function drawLoss() {
+    const host = document.getElementById("fig-loss");
+    const W = 640, H = 300, L = 62, R = 58, T = 14, B = 40;
+    const x = (e) => L + (e / 150) * (W - L - R);
+    const yMin = 0.0044, yMax = 0.0058;
+    const y = (v) => T + (1 - (v - yMin) / (yMax - yMin)) * (H - T - B);
+    let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Training loss per epoch for four runs">`;
+    for (let v = 0.0044; v <= 0.00581; v += 0.0002) {
+      s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`;
+      s += `<text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(4)}</text>`;
+    }
+    for (let e = 0; e <= 150; e += 25) {
+      s += `<text x="${x(e)}" y="${H - B + 18}" text-anchor="middle">${e}</text>`;
+    }
+    s += `<line class="axis" x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}"/>`;
+    s += `<text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">epoch (100 M positions each)</text>`;
+    s += `<text x="14" y="${(T + H - B) / 2}" text-anchor="middle" transform="rotate(-90 14 ${(T + H - B) / 2})">train loss</text>`;
+    runs.forEach((r) => {
+      const d = r.pts.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
+      s += `<path d="${d}" fill="none" stroke="var(${r.color})" stroke-width="2" stroke-linejoin="round" ${r.dashed ? 'stroke-dasharray="5 4"' : ""}/>`;
+      if (!r.dashed) {
+        const last = r.pts[r.pts.length - 1];
+        s += `<circle cx="${x(last[0])}" cy="${y(last[1])}" r="4" fill="var(${r.color})" stroke="var(--surface)" stroke-width="2"/>`;
+      }
+    });
+    const labels = [["net3", runs[3]], ["net1", runs[1]], ["net2", runs[2]], ["net5", runs[4]]];
+    labels.forEach(([txt, r]) => {
+      const last = r.pts[r.pts.length - 1];
+      s += `<text class="lbl" x="${x(last[0]) + 8}" y="${y(last[1]) + 4}">${txt}</text>`;
+    });
+    runs.forEach((r) => r.pts.forEach((p) => {
+      s += `<circle class="hit" cx="${x(p[0])}" cy="${y(p[1])}" r="9" fill="transparent" data-l="${r.name} · epoch ${p[0]} · ${fmt(p[1])}"/>`;
+    }));
+    s += `</svg>`;
+    host.innerHTML = s + `<div class="legend">` + runs.filter(r => !r.dashed).map(r => `<span style="--c:var(${r.color})">${r.name}</span>`).join("") + `</div><div class="tip"></div>`;
+    const tip = host.querySelector(".tip");
+    host.querySelectorAll(".hit").forEach((c) => {
+      c.addEventListener("mouseenter", () => {
+        tip.textContent = c.dataset.l; tip.style.display = "block";
+        const hb = host.getBoundingClientRect(), cb = c.getBoundingClientRect();
+        tip.style.left = (cb.left - hb.left + cb.width / 2) + "px";
+        tip.style.top = (cb.top - hb.top) + "px";
+      });
+      c.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+    });
+  }
+
+  // Figure 2: nodes per second by implementation phase.
+  function drawNps() {
+    const host = document.getElementById("fig-nps");
+    const bars = [
+      ["python-chess + NMP/LMR", 22, "depth 4–7"],
+      ["numba bitboards (first gate)", 251, "same search, 10–14× faster"],
+      ["before int32 sums, box under load", 176, "int64 accumulation, no SIMD"],
+      ["after int32 sums, box under load", 236, "same answers, bit for bit"],
+      ["today, four-position probe", 299, "283–360 by position"],
+    ];
+    const W = 640, H = 270, L = 250, R = 70, T = 12, B = 30;
+    const maxV = 360;
+    const x = (v) => L + (v / maxV) * (W - L - R);
+    const rowH = (H - T - B) / bars.length;
+    let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Nodes per second by implementation phase">`;
+    for (let v = 0; v <= maxV; v += 60) {
+      s += `<line class="grid" x1="${x(v)}" x2="${x(v)}" y1="${T}" y2="${H - B}"/>`;
+      s += `<text x="${x(v)}" y="${H - B + 16}" text-anchor="middle">${v}</text>`;
+    }
+    s += `<text x="${(L + W - R) / 2}" y="${H - 2}" text-anchor="middle">thousand nodes per second, one core</text>`;
+    bars.forEach((b, i) => {
+      const yy = T + i * rowH + rowH * 0.22, h = rowH * 0.56;
+      s += `<text class="lbl" x="${L - 10}" y="${yy + h / 2 + 4}" text-anchor="end">${b[0]}</text>`;
+      s += `<rect x="${x(0)}" y="${yy}" width="${x(b[1]) - x(0)}" height="${h}" fill="var(--series-1)"><title>${b[0]}: ${b[1]} knps (${b[2]})</title></rect>`;
+      s += `<text class="lbl" x="${x(b[1]) + 8}" y="${yy + h / 2 + 4}">${b[1]}</text>`;
+    });
+    s += `</svg>`;
+    host.innerHTML = s;
+  }
+
+  drawLoss();
+  drawNps();
+})();
+</script>
+</body>
+</html>

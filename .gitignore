@@ -2,5 +2,11 @@
 __pycache__/
 .mypy_cache/
 .ruff_cache/
+.pytest_cache/
 submission.zip
+agent*.zip
+/*.npz
 *.pgn
+weights/*.npz
+!weights/nnue.npz
+!weights/nnue-net5.npz

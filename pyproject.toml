@@ -12,6 +12,7 @@ dependencies = [
 
 [tool.uv]
 package = false
+default-groups = ["dev", "demo"]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
@@ -22,7 +23,12 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [dependency-groups]
-dev = ["mypy>=1.18", "ruff>=0.14"]
+dev = ["mypy>=1.18", "ruff>=0.14", "pytest>=8.3"]
+demo = ["fastapi>=0.115", "uvicorn>=0.30", "huggingface_hub>=0.25"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
@@ -34,4 +40,29 @@ ignore = ["N818"]
 
 [tool.mypy]
 strict = true
-files = ["agent.py", "harness"]
+files = [
+    "agent.py",
+    "bitboard.py",
+    "nnue_bitboard.py",
+    "search.py",
+    "search_kernel.py",
+    "nnue_arch.py",
+    "nnue_features.py",
+    "nnue_net.py",
+    "harness",
+    "tools",
+    "tests",
+    "demo",
+]
+mypy_path = "tests"
+
+[[tool.mypy.overrides]]
+module = ["numba.*", "model", "model.*", "huggingface_hub", "huggingface_hub.*"]
+ignore_missing_imports = true
+
+# torch ships huge stubs that crash mypy on descent; treat it as an opaque Any.
+[[tool.mypy.overrides]]
+module = ["torch", "torch.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+follow_imports_for_stubs = true
