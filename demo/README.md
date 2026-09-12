@@ -20,4 +20,4 @@ iteration, so you can see the branching arithmetic that decides a move.
 - **net5 (latest)**: the same search with the most recent net.
 
 The first request after a cold start takes about a minute while the kernels compile.
-Source, training notes and the write-up: https://github.com/ArnavBagmar/aichessathon-starter
+Source, training notes and the write-up: https://github.com/ArnavBagmar/aichess
