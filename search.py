@@ -36,6 +36,7 @@ from search_kernel import (
 )
 from search_kernel import from_tt_score as _from_tt_score
 from search_kernel import to_tt_score as _to_tt_score
+from search_kernel import tt_move as _tt_move
 
 # Time control. Every term but INCREMENT_MS comes from the clock we were handed.
 # A fixed horizon of N moves spends time_left/N, which decays with the clock: rated games
@@ -148,6 +149,10 @@ class Searcher:
         self.ctrl = np.zeros(CTRL_SIZE, dtype=np.int64)
         self.nodes = 0
         self.score = 0
+        self.elapsed = 0.0  # seconds the last pick spent searching
+        # One entry per completed iteration of the last pick:
+        # (depth, cumulative nodes, score in 1/32 cp for the side to move, move, seconds).
+        self.iterations: list[tuple[int, int, int, int, float]] = []
         self._last_fullmove = 0
         self._net_tuple = (
             net.ft_w,
@@ -248,11 +253,15 @@ class Searcher:
         )
         return int(score), int(self.ctrl[CTRL_ROOT_MOVE])
 
-    def pick(self, fen: str, time_left_ms: int, node_limit: int = 0) -> chess.Move:
+    def pick(
+        self, fen: str, time_left_ms: int, node_limit: int = 0, move_time_ms: int = 0
+    ) -> chess.Move:
         """Best move for `fen` within the budget implied by `time_left_ms`.
 
         A positive `node_limit` caps the search by nodes instead of the clock, which
-        makes a search reproducible for tests and benchmarks.
+        makes a search reproducible for tests and benchmarks. A positive `move_time_ms`
+        replaces the clock formula with a fixed think time (soft and hard budget alike);
+        the platform never uses it, the demo and tools do.
         """
         board = chess.Board(fen)
         legal = list(board.legal_moves)
@@ -261,8 +270,12 @@ class Searcher:
         self.note_root_position(board)
         self._set_root(board)
         started = time.monotonic()
-        soft = started + budget_ms(time_left_ms, board.fullmove_number) / 1000.0
-        hard = started + hard_budget_ms(time_left_ms, board.fullmove_number) / 1000.0
+        if move_time_ms > 0:
+            soft = hard = started + move_time_ms / 1000.0
+        else:
+            soft = started + budget_ms(time_left_ms, board.fullmove_number) / 1000.0
+            hard = started + hard_budget_ms(time_left_ms, board.fullmove_number) / 1000.0
+        self.iterations = []
         self.ctrl[CTRL_NODES] = 0
         self.ctrl[CTRL_ABORT] = 0
         self.ctrl[CTRL_NODE_LIMIT] = node_limit
@@ -296,6 +309,9 @@ class Searcher:
                 break
             if move >= 0:
                 best = move
+            self.iterations.append(
+                (depth, int(self.ctrl[CTRL_NODES]), score, best, time.monotonic() - started)
+            )
             if score >= MATE_THRESHOLD:
                 break  # a forced mate for us is as good as it gets
             # A forced mate against us is not final: deeper iterations find the longest
@@ -304,6 +320,7 @@ class Searcher:
             previous_move, previous_score = move, score
         self.nodes = int(self.ctrl[CTRL_NODES])
         self.score = score  # last completed iteration, for the side to move, 1/32 cp
+        self.elapsed = time.monotonic() - started
 
         chosen = legal[0]
         if best >= 0:
@@ -316,6 +333,39 @@ class Searcher:
                 )
         self.note_move_played(board, chosen)
         return chosen
+
+    def principal_variation(self, board: chess.Board, max_len: int = 12) -> list[chess.Move]:
+        """The line the table holds from `board`, read for display after a pick.
+
+        Each step looks the position up in the transposition table and follows its
+        stored move while it is legal, stopping at a miss, a repeated position or
+        `max_len`. It is a report of what the search believed, not a search.
+        """
+        line: list[chess.Move] = []
+        # Rebuild from the FEN exactly as pick() did: python-chess keeps an en-passant
+        # square after every double push but writes it to the FEN only when a capture
+        # is legal, and the root key must match what the kernel hashed.
+        position = chess.Board(board.fen())
+        seen: set[str] = set()
+        while len(line) < max_len:
+            key_fen = position.fen()
+            if key_fen in seen:
+                break
+            seen.add(key_fen)
+            bb.set_from_board(position, self._after, 0)
+            key = self._after.keys[0]
+            slot = int(key & np.uint64(TT_SIZE - 1))
+            if self.tt_keys[slot] != key:
+                break
+            packed = int(_tt_move(int(self.tt_data[slot])))
+            if packed <= 0:
+                break
+            move = bb.move_to_chess(packed)
+            if move not in position.legal_moves:
+                break
+            line.append(move)
+            position.push(move)
+        return line
 
     def warm_up(self) -> None:
         """Compile every kernel inside the import budget, then leave no state behind."""

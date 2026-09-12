@@ -335,3 +335,35 @@ def test_history_stays_bounded_and_decays() -> None:
     assert history[12, 28] < peak
     assert sk.history_bonus(1) < sk.history_bonus(4) <= sk.HISTORY_BONUS_CAP
     assert sk.HISTORY_MAX // sk.HISTORY_LMR_DIVISOR <= 2
+
+
+def test_fixed_move_time_returns_a_legal_move_quickly(searcher: Searcher) -> None:
+    board = chess.Board()
+    started = time.monotonic()
+    move = searcher.pick(board.fen(), 0, move_time_ms=300)
+    assert time.monotonic() - started < 1.5
+    assert move in board.legal_moves
+    assert 0.0 < searcher.elapsed < 1.5
+
+
+def test_iterations_record_each_completed_depth(searcher: Searcher) -> None:
+    searcher.pick(chess.Board().fen(), 0, move_time_ms=300)
+    assert searcher.iterations
+    depths = [depth for depth, *_ in searcher.iterations]
+    nodes = [nodes for _, nodes, *_ in searcher.iterations]
+    assert depths == sorted(set(depths))
+    assert nodes == sorted(nodes)
+    assert nodes[-1] <= searcher.nodes
+    assert all(0.0 <= seconds <= searcher.elapsed for *_, seconds in searcher.iterations)
+
+
+def test_principal_variation_starts_with_the_chosen_move(searcher: Searcher) -> None:
+    board = chess.Board("r1bq1rk1/pp2bppp/2n1pn2/2pp4/3P4/2PBPN2/PP1N1PPP/R1BQ1RK1 w - - 0 8")
+    chosen = searcher.pick(board.fen(), 0, move_time_ms=500)
+    line = searcher.principal_variation(board)
+    assert line
+    assert line[0] == chosen
+    position = board.copy()
+    for move in line:
+        assert move in position.legal_moves
+        position.push(move)

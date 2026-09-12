@@ -1,0 +1,932 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Chessathon Engine</title>
+<meta name="description" content="Play the NNUE + numba alpha-beta engine built for the AI Chessathon and watch the search arithmetic behind every move.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #EEF1F4;
+  --panel: #FFFFFF;
+  --panel-2: #E4E9EE;
+  --ink: #14202B;
+  --muted: #5B6B7A;
+  --line: #CBD4DC;
+  --teal: #0F6E6B;
+  --teal-soft: rgba(15, 110, 107, 0.14);
+  --amber: #B8641B;
+  --amber-soft: rgba(184, 100, 27, 0.16);
+  --sq-light: #E3D9C6;
+  --sq-dark: #8C6F4E;
+  --sq-last: rgba(184, 100, 27, 0.45);
+  --sq-sel: rgba(15, 110, 107, 0.55);
+  --sq-check: rgba(178, 34, 34, 0.6);
+  --dot: rgba(20, 32, 43, 0.28);
+  --bar-white: #F4F1EA;
+  --bar-black: #2A3441;
+  --font-display: "Newsreader", "Iowan Old Style", Georgia, serif;
+  --font-body: "Public Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #101820;
+    --panel: #172028;
+    --panel-2: #1F2A34;
+    --ink: #E6ECF1;
+    --muted: #97A6B4;
+    --line: #2E3A46;
+    --teal: #3FB5AE;
+    --teal-soft: rgba(63, 181, 174, 0.18);
+    --amber: #E0A054;
+    --amber-soft: rgba(224, 160, 84, 0.18);
+    --dot: rgba(230, 236, 241, 0.32);
+    --bar-white: #E6ECF1;
+    --bar-black: #0B1117;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #101820;
+  --panel: #172028;
+  --panel-2: #1F2A34;
+  --ink: #E6ECF1;
+  --muted: #97A6B4;
+  --line: #2E3A46;
+  --teal: #3FB5AE;
+  --teal-soft: rgba(63, 181, 174, 0.18);
+  --amber: #E0A054;
+  --amber-soft: rgba(224, 160, 84, 0.18);
+  --dot: rgba(230, 236, 241, 0.32);
+  --bar-white: #E6ECF1;
+  --bar-black: #0B1117;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--teal); }
+button, select, input {
+  font: inherit;
+  color: inherit;
+}
+:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+.page {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 28px 24px 48px;
+}
+header.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 24px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 16px;
+  margin-bottom: 24px;
+}
+.masthead h1 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 34px;
+  letter-spacing: -0.01em;
+  margin: 0;
+  text-wrap: balance;
+}
+.masthead p {
+  margin: 0;
+  color: var(--muted);
+  max-width: 60ch;
+}
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
+  gap: 28px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+/* ---- board ---- */
+.board-wrap {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  max-width: min(80vh, 600px);
+}
+.evalbar {
+  position: relative;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--bar-black);
+  border: 1px solid var(--line);
+}
+.evalbar .fill {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 50%;
+  background: var(--bar-white);
+  transition: height 400ms ease;
+}
+.evalbar .label {
+  position: absolute;
+  left: 0; right: 0;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-align: center;
+  color: var(--muted);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  pointer-events: none;
+}
+.evalbar .label.top { top: 6px; }
+.evalbar .label.bottom { bottom: 6px; }
+.board {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  aspect-ratio: 1;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  user-select: none;
+  touch-action: manipulation;
+}
+.sq {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  background: var(--sq-light);
+}
+.sq.dark { background: var(--sq-dark); }
+.sq.last::before, .sq.sel::before, .sq.check::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.sq.last::before { background: var(--sq-last); }
+.sq.sel::before { background: var(--sq-sel); }
+.sq.check::before { background: radial-gradient(circle, var(--sq-check) 0%, transparent 70%); }
+.sq.target::after {
+  content: "";
+  position: absolute;
+  width: 26%;
+  height: 26%;
+  border-radius: 50%;
+  background: var(--dot);
+}
+.sq.target.capture::after {
+  width: 86%;
+  height: 86%;
+  background: transparent;
+  border: 4px solid var(--dot);
+}
+.sq svg {
+  position: relative;
+  width: 88%;
+  height: 88%;
+  pointer-events: none;
+}
+.sq .coord {
+  position: absolute;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  color: rgba(20, 32, 43, 0.55);
+}
+.sq.dark .coord { color: rgba(227, 217, 198, 0.7); }
+.sq .coord.file { right: 3px; bottom: 2px; }
+.sq .coord.rank { left: 3px; top: 2px; }
+.board.busy .sq { cursor: progress; }
+.board:focus-within { outline: none; }
+
+.board-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-top: 12px;
+  max-width: min(80vh, 600px);
+}
+.status {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--muted);
+  min-height: 1.5em;
+}
+.status.thinking { color: var(--amber); }
+.status.over { color: var(--ink); font-weight: 500; }
+
+.moves {
+  margin-top: 16px;
+  max-width: min(80vh, 600px);
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  max-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+}
+.moves .num { color: var(--muted); }
+.moves .empty { color: var(--muted); font-style: italic; }
+
+/* ---- side ---- */
+.side {
+  display: grid;
+  gap: 20px;
+}
+.controls {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+.field { display: grid; gap: 4px; }
+.field label { font-size: 12px; color: var(--muted); }
+.field select, .field input {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 7px 10px;
+  width: 100%;
+}
+.field input { font-family: var(--font-mono); font-size: 12px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.seg {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.seg button {
+  flex: 1;
+  padding: 7px 0;
+  background: var(--panel-2);
+  border: 0;
+  cursor: pointer;
+  font-size: 13px;
+}
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--teal); color: #fff; }
+.actions { display: flex; gap: 10px; }
+.btn {
+  padding: 9px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  cursor: pointer;
+  font-weight: 500;
+}
+.btn.primary { background: var(--teal); border-color: var(--teal); color: #fff; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.telemetry {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+.telemetry h2 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 22px;
+  margin: 0;
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.stat { display: grid; gap: 2px; }
+.stat .k { font-size: 11px; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+.stat .v {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.stat .v small { font-size: 11px; color: var(--muted); margin-left: 2px; }
+.pvline {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 8px 10px;
+  background: var(--teal-soft);
+  border-radius: 4px;
+  word-break: break-word;
+}
+.pvline .k { color: var(--muted); font-size: 11px; margin-right: 6px; }
+table.iters {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.iters th, .iters td {
+  text-align: right;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.iters th { color: var(--muted); font-weight: 500; font-size: 11px; }
+.iters th:first-child, .iters td:first-child { text-align: left; }
+.iters td.move { text-align: left; }
+.iters-wrap { overflow-x: auto; max-height: 260px; overflow-y: auto; }
+.math {
+  font-size: 13.5px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  border-left: 3px solid var(--amber);
+  background: var(--amber-soft);
+  border-radius: 0 4px 4px 0;
+}
+.math code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.math b { font-weight: 600; }
+.totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+.totals span b { color: var(--ink); font-weight: 500; }
+details.help summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--teal);
+}
+details.help p {
+  margin: 8px 0 0;
+  font-size: 13.5px;
+  color: var(--muted);
+  max-width: 60ch;
+}
+.muted { color: var(--muted); }
+
+footer {
+  margin-top: 40px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  font-size: 12.5px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+}
+
+/* promotion chooser */
+.promo {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 10;
+}
+.promo[data-open="true"] { display: flex; }
+.promo .box {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  gap: 8px;
+}
+.promo button {
+  width: 64px;
+  height: 64px;
+  background: var(--sq-light);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 4px;
+}
+.promo button svg { width: 100%; height: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .evalbar .fill { transition: none; }
+}
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+<symbol id="pc-wk" viewBox="0 0 45 45"><g fill="none" fill-rule="evenodd" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"> <path stroke-linejoin="miter" d="M22.5 11.63V6M20 8h5"/> <path fill="#fff" stroke-linecap="butt" stroke-linejoin="miter" d="M22.5 25s4.5-7.5 3-10.5c0 0-1-2.5-3-2.5s-3 2.5-3 2.5c-1.5 3 3 10.5 3 10.5"/> <path fill="#fff" d="M12.5 37c5.5 3.5 14.5 3.5 20 0v-7s9-4.5 6-10.5c-4-6.5-13.5-3.5-16 4V27v-3.5c-2.5-7.5-12-10.5-16-4-3 6 6 10.5 6 10.5v7"/> <path d="M12.5 30c5.5-3 14.5-3 20 0m-20 3.5c5.5-3 14.5-3 20 0m-20 3.5c5.5-3 14.5-3 20 0"/> </g></symbol>
+<symbol id="pc-wq" viewBox="0 0 45 45"><g style="fill:#ffffff;stroke:#000000;stroke-width:1.5;stroke-linejoin:round"> <path d="M 9,26 C 17.5,24.5 30,24.5 36,26 L 38.5,13.5 L 31,25 L 30.7,10.9 L 25.5,24.5 L 22.5,10 L 19.5,24.5 L 14.3,10.9 L 14,25 L 6.5,13.5 L 9,26 z"/> <path d="M 9,26 C 9,28 10.5,28 11.5,30 C 12.5,31.5 12.5,31 12,33.5 C 10.5,34.5 11,36 11,36 C 9.5,37.5 11,38.5 11,38.5 C 17.5,39.5 27.5,39.5 34,38.5 C 34,38.5 35.5,37.5 34,36 C 34,36 34.5,34.5 33,33.5 C 32.5,31 32.5,31.5 33.5,30 C 34.5,28 36,28 36,26 C 27.5,24.5 17.5,24.5 9,26 z"/> <path d="M 11.5,30 C 15,29 30,29 33.5,30" style="fill:none"/> <path d="M 12,33.5 C 18,32.5 27,32.5 33,33.5" style="fill:none"/> <circle cx="6" cy="12" r="2" /> <circle cx="14" cy="9" r="2" /> <circle cx="22.5" cy="8" r="2" /> <circle cx="31" cy="9" r="2" /> <circle cx="39" cy="12" r="2" /> </g></symbol>
+<symbol id="pc-wr" viewBox="0 0 45 45"><g style="opacity:1; fill:#ffffff; fill-opacity:1; fill-rule:evenodd; stroke:#000000; stroke-width:1.5; stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4; stroke-dasharray:none; stroke-opacity:1;" transform="translate(0,0.3)"> <path d="M 9,39 L 36,39 L 36,36 L 9,36 L 9,39 z " style="stroke-linecap:butt;" /> <path d="M 12,36 L 12,32 L 33,32 L 33,36 L 12,36 z " style="stroke-linecap:butt;" /> <path d="M 11,14 L 11,9 L 15,9 L 15,11 L 20,11 L 20,9 L 25,9 L 25,11 L 30,11 L 30,9 L 34,9 L 34,14" style="stroke-linecap:butt;" /> <path d="M 34,14 L 31,17 L 14,17 L 11,14" /> <path d="M 31,17 L 31,29.5 L 14,29.5 L 14,17" style="stroke-linecap:butt; stroke-linejoin:miter;" /> <path d="M 31,29.5 L 32.5,32 L 12.5,32 L 14,29.5" /> <path d="M 11,14 L 34,14" style="fill:none; stroke:#000000; stroke-linejoin:miter;" /> </g></symbol>
+<symbol id="pc-wb" viewBox="0 0 45 45"><g style="opacity:1; fill:none; fill-rule:evenodd; fill-opacity:1; stroke:#000000; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; stroke-miterlimit:4; stroke-dasharray:none; stroke-opacity:1;" transform="translate(0,0.6)"> <g style="fill:#ffffff; stroke:#000000; stroke-linecap:butt;"> <path d="M 9,36 C 12.39,35.03 19.11,36.43 22.5,34 C 25.89,36.43 32.61,35.03 36,36 C 36,36 37.65,36.54 39,38 C 38.32,38.97 37.35,38.99 36,38.5 C 32.61,37.53 25.89,38.96 22.5,37.5 C 19.11,38.96 12.39,37.53 9,38.5 C 7.65,38.99 6.68,38.97 6,38 C 7.35,36.54 9,36 9,36 z"/> <path d="M 15,32 C 17.5,34.5 27.5,34.5 30,32 C 30.5,30.5 30,30 30,30 C 30,27.5 27.5,26 27.5,26 C 33,24.5 33.5,14.5 22.5,10.5 C 11.5,14.5 12,24.5 17.5,26 C 17.5,26 15,27.5 15,30 C 15,30 14.5,30.5 15,32 z"/> <path d="M 25 8 A 2.5 2.5 0 1 1 20,8 A 2.5 2.5 0 1 1 25 8 z"/> </g> <path d="M 17.5,26 L 27.5,26 M 15,30 L 30,30 M 22.5,15.5 L 22.5,20.5 M 20,18 L 25,18" style="fill:none; stroke:#000000; stroke-linejoin:miter;"/> </g></symbol>
+<symbol id="pc-wn" viewBox="0 0 45 45"><g style="opacity:1; fill:none; fill-opacity:1; fill-rule:evenodd; stroke:#000000; stroke-width:1.5; stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4; stroke-dasharray:none; stroke-opacity:1;" transform="translate(0,0.3)"> <path d="M 22,10 C 32.5,11 38.5,18 38,39 L 15,39 C 15,30 25,32.5 23,18" style="fill:#ffffff; stroke:#000000;" /> <path d="M 24,18 C 24.38,20.91 18.45,25.37 16,27 C 13,29 13.18,31.34 11,31 C 9.958,30.06 12.41,27.96 11,28 C 10,28 11.19,29.23 10,30 C 9,30 5.997,31 6,26 C 6,24 12,14 12,14 C 12,14 13.89,12.1 14,10.5 C 13.27,9.506 13.5,8.5 13.5,7.5 C 14.5,6.5 16.5,10 16.5,10 L 18.5,10 C 18.5,10 19.28,8.008 21,7 C 22,7 22,10 22,10" style="fill:#ffffff; stroke:#000000;" /> <path d="M 9.5 25.5 A 0.5 0.5 0 1 1 8.5,25.5 A 0.5 0.5 0 1 1 9.5 25.5 z" style="fill:#000000; stroke:#000000;" /> <path d="M 15 15.5 A 0.5 1.5 0 1 1 14,15.5 A 0.5 1.5 0 1 1 15 15.5 z" transform="matrix(0.866,0.5,-0.5,0.866,9.693,-5.173)" style="fill:#000000; stroke:#000000;" /> </g></symbol>
+<symbol id="pc-wp" viewBox="0 0 45 45"><path d="m 22.5,9 c -2.21,0 -4,1.79 -4,4 0,0.89 0.29,1.71 0.78,2.38 C 17.33,16.5 16,18.59 16,21 c 0,2.03 0.94,3.84 2.41,5.03 C 15.41,27.09 11,31.58 11,39.5 H 34 C 34,31.58 29.59,27.09 26.59,26.03 28.06,24.84 29,23.03 29,21 29,18.59 27.67,16.5 25.72,15.38 26.21,14.71 26.5,13.89 26.5,13 c 0,-2.21 -1.79,-4 -4,-4 z" style="opacity:1; fill:#ffffff; fill-opacity:1; fill-rule:nonzero; stroke:#000000; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:miter; stroke-miterlimit:4; stroke-dasharray:none; stroke-opacity:1;"/></symbol>
+<symbol id="pc-bk" viewBox="0 0 45 45"><g style="fill:none; fill-opacity:1; fill-rule:evenodd; stroke:#000000; stroke-width:1.5; stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4; stroke-dasharray:none; stroke-opacity:1;"> <path d="M 22.5,11.63 L 22.5,6" style="fill:none; stroke:#000000; stroke-linejoin:miter;" id="path6570"/> <path d="M 22.5,25 C 22.5,25 27,17.5 25.5,14.5 C 25.5,14.5 24.5,12 22.5,12 C 20.5,12 19.5,14.5 19.5,14.5 C 18,17.5 22.5,25 22.5,25" style="fill:#000000;fill-opacity:1; stroke-linecap:butt; stroke-linejoin:miter;"/> <path d="M 12.5,37 C 18,40.5 27,40.5 32.5,37 L 32.5,30 C 32.5,30 41.5,25.5 38.5,19.5 C 34.5,13 25,16 22.5,23.5 L 22.5,27 L 22.5,23.5 C 20,16 10.5,13 6.5,19.5 C 3.5,25.5 12.5,30 12.5,30 L 12.5,37" style="fill:#000000; stroke:#000000;"/> <path d="M 20,8 L 25,8" style="fill:none; stroke:#000000; stroke-linejoin:miter;"/> <path d="M 32,29.5 C 32,29.5 40.5,25.5 38.03,19.85 C 34.15,14 25,18 22.5,24.5 L 22.5,26.6 L 22.5,24.5 C 20,18 10.85,14 6.97,19.85 C 4.5,25.5 13,29.5 13,29.5" style="fill:none; stroke:#ffffff;"/> <path d="M 12.5,30 C 18,27 27,27 32.5,30 M 12.5,33.5 C 18,30.5 27,30.5 32.5,33.5 M 12.5,37 C 18,34 27,34 32.5,37" style="fill:none; stroke:#ffffff;"/> </g></symbol>
+<symbol id="pc-bq" viewBox="0 0 45 45"><g style="fill:#000000;stroke:#000000;stroke-width:1.5; stroke-linecap:round;stroke-linejoin:round"> <path d="M 9,26 C 17.5,24.5 30,24.5 36,26 L 38.5,13.5 L 31,25 L 30.7,10.9 L 25.5,24.5 L 22.5,10 L 19.5,24.5 L 14.3,10.9 L 14,25 L 6.5,13.5 L 9,26 z" style="stroke-linecap:butt;fill:#000000" /> <path d="m 9,26 c 0,2 1.5,2 2.5,4 1,1.5 1,1 0.5,3.5 -1.5,1 -1,2.5 -1,2.5 -1.5,1.5 0,2.5 0,2.5 6.5,1 16.5,1 23,0 0,0 1.5,-1 0,-2.5 0,0 0.5,-1.5 -1,-2.5 -0.5,-2.5 -0.5,-2 0.5,-3.5 1,-2 2.5,-2 2.5,-4 -8.5,-1.5 -18.5,-1.5 -27,0 z" /> <path d="M 11.5,30 C 15,29 30,29 33.5,30" /> <path d="m 12,33.5 c 6,-1 15,-1 21,0" /> <circle cx="6" cy="12" r="2" /> <circle cx="14" cy="9" r="2" /> <circle cx="22.5" cy="8" r="2" /> <circle cx="31" cy="9" r="2" /> <circle cx="39" cy="12" r="2" /> <path d="M 11,38.5 A 35,35 1 0 0 34,38.5" style="fill:none; stroke:#000000;stroke-linecap:butt;" /> <g style="fill:none; stroke:#ffffff;"> <path d="M 11,29 A 35,35 1 0 1 34,29" /> <path d="M 12.5,31.5 L 32.5,31.5" /> <path d="M 11.5,34.5 A 35,35 1 0 0 33.5,34.5" /> <path d="M 10.5,37.5 A 35,35 1 0 0 34.5,37.5" /> </g> </g></symbol>
+<symbol id="pc-br" viewBox="0 0 45 45"><g style="opacity:1; fill:#000000; fill-opacity:1; fill-rule:evenodd; stroke:#000000; stroke-width:1.5; stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4; stroke-dasharray:none; stroke-opacity:1;" transform="translate(0,0.3)"> <path d="M 9,39 L 36,39 L 36,36 L 9,36 L 9,39 z " style="stroke-linecap:butt;" /> <path d="M 12.5,32 L 14,29.5 L 31,29.5 L 32.5,32 L 12.5,32 z " style="stroke-linecap:butt;" /> <path d="M 12,36 L 12,32 L 33,32 L 33,36 L 12,36 z " style="stroke-linecap:butt;" /> <path d="M 14,29.5 L 14,16.5 L 31,16.5 L 31,29.5 L 14,29.5 z " style="stroke-linecap:butt;stroke-linejoin:miter;" /> <path d="M 14,16.5 L 11,14 L 34,14 L 31,16.5 L 14,16.5 z " style="stroke-linecap:butt;" /> <path d="M 11,14 L 11,9 L 15,9 L 15,11 L 20,11 L 20,9 L 25,9 L 25,11 L 30,11 L 30,9 L 34,9 L 34,14 L 11,14 z " style="stroke-linecap:butt;" /> <path d="M 12,35.5 L 33,35.5 L 33,35.5" style="fill:none; stroke:#ffffff; stroke-width:1; stroke-linejoin:miter;" /> <path d="M 13,31.5 L 32,31.5" style="fill:none; stroke:#ffffff; stroke-width:1; stroke-linejoin:miter;" /> <path d="M 14,29.5 L 31,29.5" style="fill:none; stroke:#ffffff; stroke-width:1; stroke-linejoin:miter;" /> <path d="M 14,16.5 L 31,16.5" style="fill:none; stroke:#ffffff; stroke-width:1; stroke-linejoin:miter;" /> <path d="M 11,14 L 34,14" style="fill:none; stroke:#ffffff; stroke-width:1; stroke-linejoin:miter;" /> </g></symbol>
+<symbol id="pc-bb" viewBox="0 0 45 45"><g style="opacity:1; fill:none; fill-rule:evenodd; fill-opacity:1; stroke:#000000; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; stroke-miterlimit:4; stroke-dasharray:none; stroke-opacity:1;" transform="translate(0,0.6)"> <g style="fill:#000000; stroke:#000000; stroke-linecap:butt;"> <path d="M 9,36 C 12.39,35.03 19.11,36.43 22.5,34 C 25.89,36.43 32.61,35.03 36,36 C 36,36 37.65,36.54 39,38 C 38.32,38.97 37.35,38.99 36,38.5 C 32.61,37.53 25.89,38.96 22.5,37.5 C 19.11,38.96 12.39,37.53 9,38.5 C 7.65,38.99 6.68,38.97 6,38 C 7.35,36.54 9,36 9,36 z"/> <path d="M 15,32 C 17.5,34.5 27.5,34.5 30,32 C 30.5,30.5 30,30 30,30 C 30,27.5 27.5,26 27.5,26 C 33,24.5 33.5,14.5 22.5,10.5 C 11.5,14.5 12,24.5 17.5,26 C 17.5,26 15,27.5 15,30 C 15,30 14.5,30.5 15,32 z"/> <path d="M 25 8 A 2.5 2.5 0 1 1 20,8 A 2.5 2.5 0 1 1 25 8 z"/> </g> <path d="M 17.5,26 L 27.5,26 M 15,30 L 30,30 M 22.5,15.5 L 22.5,20.5 M 20,18 L 25,18" style="fill:none; stroke:#ffffff; stroke-linejoin:miter;"/> </g></symbol>
+<symbol id="pc-bn" viewBox="0 0 45 45"><g style="opacity:1; fill:none; fill-opacity:1; fill-rule:evenodd; stroke:#000000; stroke-width:1.5; stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4; stroke-dasharray:none; stroke-opacity:1;" transform="translate(0,0.3)"> <path d="M 22,10 C 32.5,11 38.5,18 38,39 L 15,39 C 15,30 25,32.5 23,18" style="fill:#000000; stroke:#000000;" /> <path d="M 24,18 C 24.38,20.91 18.45,25.37 16,27 C 13,29 13.18,31.34 11,31 C 9.958,30.06 12.41,27.96 11,28 C 10,28 11.19,29.23 10,30 C 9,30 5.997,31 6,26 C 6,24 12,14 12,14 C 12,14 13.89,12.1 14,10.5 C 13.27,9.506 13.5,8.5 13.5,7.5 C 14.5,6.5 16.5,10 16.5,10 L 18.5,10 C 18.5,10 19.28,8.008 21,7 C 22,7 22,10 22,10" style="fill:#000000; stroke:#000000;" /> <path d="M 9.5 25.5 A 0.5 0.5 0 1 1 8.5,25.5 A 0.5 0.5 0 1 1 9.5 25.5 z" style="fill:#ffffff; stroke:#ffffff;" /> <path d="M 15 15.5 A 0.5 1.5 0 1 1 14,15.5 A 0.5 1.5 0 1 1 15 15.5 z" transform="matrix(0.866,0.5,-0.5,0.866,9.693,-5.173)" style="fill:#ffffff; stroke:#ffffff;" /> <path d="M 24.55,10.4 L 24.1,11.85 L 24.6,12 C 27.75,13 30.25,14.49 32.5,18.75 C 34.75,23.01 35.75,29.06 35.25,39 L 35.2,39.5 L 37.45,39.5 L 37.5,39 C 38,28.94 36.62,22.15 34.25,17.66 C 31.88,13.17 28.46,11.02 25.06,10.5 L 24.55,10.4 z " style="fill:#ffffff; stroke:none;" /> </g></symbol>
+<symbol id="pc-bp" viewBox="0 0 45 45"><path d="m 22.5,9 c -2.21,0 -4,1.79 -4,4 0,0.89 0.29,1.71 0.78,2.38 C 17.33,16.5 16,18.59 16,21 c 0,2.03 0.94,3.84 2.41,5.03 C 15.41,27.09 11,31.58 11,39.5 H 34 C 34,31.58 29.59,27.09 26.59,26.03 28.06,24.84 29,23.03 29,21 29,18.59 27.67,16.5 25.72,15.38 26.21,14.71 26.5,13.89 26.5,13 c 0,-2.21 -1.79,-4 -4,-4 z" style="opacity:1; fill:#000000; fill-opacity:1; fill-rule:nonzero; stroke:#000000; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:miter; stroke-miterlimit:4; stroke-dasharray:none; stroke-opacity:1;"/></symbol>
+</svg>
+<div class="page">
+  <header class="masthead">
+    <div>
+      <div class="eyebrow">AI Chessathon · one core · no engines allowed</div>
+      <h1>Play the engine</h1>
+    </div>
+    <p>An NNUE evaluation trained on engine-labelled positions, searched by alpha-beta kernels compiled with numba over bitboards. Every reply shows the arithmetic behind it.</p>
+  </header>
+
+  <div class="layout">
+    <section aria-label="Board">
+      <div class="board-wrap">
+        <div class="evalbar" id="evalbar" title="Evaluation from White's side">
+          <div class="fill" id="evalfill"></div>
+          <span class="label top" id="evaltop"></span>
+        </div>
+        <div class="board" id="board" role="grid" aria-label="Chess board"></div>
+      </div>
+      <div class="board-foot">
+        <div class="status" id="status">Loading engines…</div>
+        <button class="btn" id="flip" type="button">Flip board</button>
+      </div>
+      <div class="moves" id="moves"><span class="empty">No moves yet.</span></div>
+    </section>
+
+    <aside class="side">
+      <form class="controls" id="controls" aria-label="Game settings">
+        <div class="field">
+          <label for="engine">Engine</label>
+          <select id="engine"></select>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Play as</label>
+            <div class="seg" id="color">
+              <button type="button" data-color="white" aria-pressed="true">White</button>
+              <button type="button" data-color="black" aria-pressed="false">Black</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="think">Think time</label>
+            <select id="think"></select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="fen">Start position (FEN, optional)</label>
+          <input id="fen" placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" spellcheck="false">
+        </div>
+        <div class="actions">
+          <button class="btn primary" id="new" type="submit">New game</button>
+        </div>
+      </form>
+
+      <section class="telemetry" aria-label="Search telemetry">
+        <div>
+          <div class="eyebrow">Search telemetry</div>
+          <h2 id="tele-title">Waiting for the first engine move</h2>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="k">Depth</span><span class="v" id="t-depth">–</span></div>
+          <div class="stat"><span class="k">Nodes</span><span class="v" id="t-nodes">–</span></div>
+          <div class="stat"><span class="k">Time</span><span class="v" id="t-time">–</span></div>
+          <div class="stat"><span class="k">Nodes/s</span><span class="v" id="t-nps">–</span></div>
+        </div>
+        <div class="stats">
+          <div class="stat"><span class="k">Eval</span><span class="v" id="t-eval">–</span></div>
+          <div class="stat"><span class="k">EBF</span><span class="v" id="t-ebf" title="nodes^(1/depth)">–</span></div>
+          <div class="stat"><span class="k">Move</span><span class="v" id="t-move">–</span></div>
+          <div class="stat"><span class="k">Net</span><span class="v" id="t-net">–</span></div>
+        </div>
+        <div class="pvline" id="pv"><span class="k">PV</span><span class="muted">principal variation appears here</span></div>
+        <div class="iters-wrap">
+          <table class="iters" aria-label="Iterations">
+            <thead><tr><th>depth</th><th>nodes</th><th>× prev</th><th>score</th><th>ms</th><th class="move">best</th></tr></thead>
+            <tbody id="iters"><tr><td colspan="6" class="muted">iterative deepening fills this table, one row per completed depth</td></tr></tbody>
+          </table>
+        </div>
+        <div class="math" id="math">
+          Each row is one more ply. The <b>× prev</b> column is the measured effective branching factor: how many times more nodes the next ply cost. Plain minimax pays roughly 35× per ply; alpha-beta with good move ordering pays about √35 ≈ 5.9×.
+        </div>
+        <div class="totals" id="totals">
+          <span>game nodes <b>0</b></span><span>thought <b>0.0 s</b></span><span>mean <b>–</b> nodes/s</span>
+        </div>
+        <details class="help">
+          <summary>How to read this</summary>
+          <p>The score is the net's evaluation in centipawns, shown from White's side; internally the search keeps it as an integer in 1/32-centipawn units. Depth is the last iteration that finished inside the think time; the table lists them all, with the node count when each one completed. Nodes include the quiescence search at the leaves, which is why depth 1 already costs hundreds of nodes. The transposition table holds 2<sup>20</sup> entries and survives across moves within a game, so later moves start with knowledge. The principal variation is read back out of that table after the search, which is why it can be shorter than the depth.</p>
+        </details>
+      </section>
+    </aside>
+  </div>
+
+  <footer>
+    <span id="limits"></span>
+    <span>Piece set: Colin M.L. Burnett, CC BY-SA 3.0.</span>
+    <span><a href="https://github.com/ArnavBagmar/aichessathon-starter">Source and write-up</a></span>
+  </footer>
+</div>
+
+<div class="promo" id="promo" data-open="false" role="dialog" aria-label="Choose promotion piece">
+  <div class="box" id="promo-box"></div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const FILES = "abcdefgh";
+  const PIECE_ID = { p: "p", n: "n", b: "b", r: "r", q: "q", k: "k" };
+
+  const state = {
+    session: null,
+    fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    legal: [],
+    human: "white",
+    flipped: false,
+    selected: null,
+    last: [],
+    sans: [],
+    busy: false,
+    over: null,
+    engineLabel: "",
+    evalWhite: 0,
+    mateWhite: null,
+    pendingPromotion: null,
+  };
+
+  // ---- FEN helpers -------------------------------------------------------
+  function parseFen(fen) {
+    const [placement, turn] = fen.split(" ");
+    const grid = {};
+    let rank = 7, file = 0;
+    for (const ch of placement) {
+      if (ch === "/") { rank -= 1; file = 0; continue; }
+      if (/\d/.test(ch)) { file += Number(ch); continue; }
+      grid[FILES[file] + (rank + 1)] = ch;
+      file += 1;
+    }
+    return { grid, turn };
+  }
+  function kingSquare(grid, color) {
+    const target = color === "white" ? "K" : "k";
+    for (const sq in grid) if (grid[sq] === target) return sq;
+    return null;
+  }
+
+  // ---- board rendering ---------------------------------------------------
+  function pieceSvg(ch) {
+    const color = ch === ch.toUpperCase() ? "w" : "b";
+    const id = "pc-" + color + PIECE_ID[ch.toLowerCase()];
+    return `<svg viewBox="0 0 45 45" aria-hidden="true"><use href="#${id}"></use></svg>`;
+  }
+  function render() {
+    const { grid, turn } = parseFen(state.fen);
+    const board = $("board");
+    const inCheck = state.checkSquare;
+    const targets = new Set(state.selected ? state.legal.filter((m) => m.startsWith(state.selected)).map((m) => m.slice(2, 4)) : []);
+    let html = "";
+    for (let r = 0; r < 8; r++) {
+      for (let f = 0; f < 8; f++) {
+        const rank = state.flipped ? r + 1 : 8 - r;
+        const file = state.flipped ? 7 - f : f;
+        const sq = FILES[file] + rank;
+        const dark = (file + rank) % 2 === 0;
+        const cls = ["sq", dark ? "dark" : ""];
+        if (state.last.includes(sq)) cls.push("last");
+        if (state.selected === sq) cls.push("sel");
+        if (targets.has(sq)) { cls.push("target"); if (grid[sq]) cls.push("capture"); }
+        if (inCheck === sq) cls.push("check");
+        let inner = grid[sq] ? pieceSvg(grid[sq]) : "";
+        if (r === 7) inner += `<span class="coord file">${FILES[file]}</span>`;
+        if (f === 0) inner += `<span class="coord rank">${rank}</span>`;
+        const label = (grid[sq] ? pieceName(grid[sq]) + " on " : "") + sq;
+        html += `<button type="button" class="${cls.join(" ").trim()}" data-sq="${sq}" role="gridcell" aria-label="${label}">${inner}</button>`;
+      }
+    }
+    board.innerHTML = html;
+    board.classList.toggle("busy", state.busy);
+    renderEval();
+    renderMoves();
+    void turn;
+  }
+  function pieceName(ch) {
+    const names = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "queen", k: "king" };
+    return (ch === ch.toUpperCase() ? "white " : "black ") + names[ch.toLowerCase()];
+  }
+  function renderMoves() {
+    const el = $("moves");
+    if (!state.sans.length) { el.innerHTML = '<span class="empty">No moves yet.</span>'; return; }
+    let html = "";
+    const startBlack = state.startTurn === "b";
+    let n = state.startFullmove || 1;
+    let i = 0;
+    if (startBlack) { html += `<span><span class="num">${n}…</span> ${state.sans[0]}</span>`; i = 1; n += 1; }
+    for (; i < state.sans.length; i += 2, n += 1) {
+      const w = state.sans[i], b = state.sans[i + 1] || "";
+      html += `<span><span class="num">${n}.</span> ${w} ${b}</span>`;
+    }
+    el.innerHTML = html;
+    el.scrollTop = el.scrollHeight;
+  }
+  function renderEval() {
+    let pct;
+    let text;
+    if (state.mateWhite !== null && state.mateWhite !== undefined) {
+      pct = state.mateWhite > 0 ? 100 : 0;
+      text = "M" + Math.abs(state.mateWhite);
+    } else {
+      const cp = state.evalWhite;
+      pct = 100 / (1 + Math.pow(10, -cp / 400));
+      text = (cp >= 0 ? "+" : "−") + (Math.abs(cp) / 100).toFixed(2);
+    }
+    $("evalfill").style.height = pct + "%";
+    $("evaltop").textContent = text;
+  }
+
+  // ---- formatting --------------------------------------------------------
+  function si(n) {
+    if (n === null || n === undefined || Number.isNaN(n)) return "–";
+    const abs = Math.abs(n);
+    if (abs >= 1e12) return (n / 1e12).toFixed(1) + "T";
+    if (abs >= 1e9) return (n / 1e9).toFixed(1) + "G";
+    if (abs >= 1e6) return (n / 1e6).toFixed(1) + "M";
+    if (abs >= 1e3) return (n / 1e3).toFixed(1) + "k";
+    return String(Math.round(n));
+  }
+  function withCommas(n) { return n.toLocaleString("en-US"); }
+  function cpText(cp, mate) {
+    if (mate !== null && mate !== undefined) return (mate > 0 ? "+M" : "−M") + Math.abs(mate);
+    return (cp >= 0 ? "+" : "−") + (Math.abs(cp) / 100).toFixed(2);
+  }
+
+  // ---- telemetry ---------------------------------------------------------
+  function showTelemetry(report, engineColor) {
+    const sign = engineColor === "white" ? 1 : -1;
+    const cpWhite = sign * report.score_cp;
+    const mateWhite = report.mate === null ? null : sign * report.mate;
+    state.evalWhite = cpWhite;
+    state.mateWhite = mateWhite;
+    $("tele-title").textContent = `${report.san} after depth ${report.depth}`;
+    $("t-depth").textContent = report.depth;
+    $("t-nodes").textContent = withCommas(report.nodes);
+    $("t-time").innerHTML = (report.time_ms / 1000).toFixed(2) + "<small>s</small>";
+    $("t-nps").textContent = withCommas(report.nps);
+    $("t-eval").textContent = cpText(cpWhite, mateWhite);
+    $("t-ebf").textContent = report.ebf === null ? "–" : report.ebf.toFixed(2);
+    $("t-move").textContent = report.san;
+    $("t-net").textContent = state.engineKey;
+    $("pv").innerHTML = `<span class="k">PV</span>` + (report.pv.length ? report.pv.join(" ") : `<span class="muted">(table held no line)</span>`);
+
+    const rows = [];
+    let prev = null;
+    for (const it of report.iterations) {
+      const ratio = prev && prev.nodes > 0 ? (it.nodes / prev.nodes).toFixed(2) + "×" : "";
+      rows.push(`<tr><td>${it.depth}</td><td>${withCommas(it.nodes)}</td><td>${ratio}</td><td>${cpText(sign * it.score_cp, null)}</td><td>${it.time_ms}</td><td class="move">${it.move}</td></tr>`);
+      prev = it;
+    }
+    $("iters").innerHTML = rows.join("") || `<tr><td colspan="6" class="muted">no iteration completed</td></tr>`;
+
+    const d = report.depth;
+    const minimax = Math.pow(35, d);
+    const ab = Math.pow(35, d / 2);
+    $("math").innerHTML =
+      `Effective branching factor <code>nodes^(1/depth) = ${withCommas(report.nodes)}^(1/${d}) = <b>${report.ebf === null ? "–" : report.ebf.toFixed(2)}</b></code>. ` +
+      `Plain minimax at a branching factor of ~35 would need <code>35^${d} ≈ <b>${si(minimax)}</b></code> nodes for this depth; ` +
+      `alpha-beta with perfect ordering approaches <code>35^(${d}/2) ≈ <b>${si(ab)}</b></code>. ` +
+      `This search: <code><b>${si(report.nodes)}</b></code> nodes in ${(report.time_ms / 1000).toFixed(2)} s at ${si(report.nps)} nodes/s. ` +
+      `The <b>× prev</b> column is the per-ply cost the pruning actually paid.`;
+  }
+  function showTotals(totals) {
+    if (!totals) return;
+    const mean = totals.time_s > 0 ? withCommas(Math.round(totals.nodes / totals.time_s)) : "–";
+    $("totals").innerHTML = `<span>game nodes <b>${withCommas(totals.nodes)}</b></span><span>thought <b>${totals.time_s.toFixed(1)} s</b></span><span>mean <b>${mean}</b> nodes/s</span>`;
+  }
+
+  // ---- status --------------------------------------------------------
+  function setStatus(text, kind) {
+    const el = $("status");
+    el.textContent = text;
+    el.className = "status" + (kind ? " " + kind : "");
+  }
+  function applyResponse(data, humanSan) {
+    if (humanSan) state.sans.push(humanSan);
+    if (data.engine_move) {
+      state.sans.push(data.engine_move.san);
+      state.last = [data.engine_move.uci.slice(0, 2), data.engine_move.uci.slice(2, 4)];
+      showTelemetry(data.engine_move, state.human === "white" ? "black" : "white");
+    }
+    state.fen = data.fen;
+    state.legal = data.legal;
+    state.over = data.result;
+    state.checkSquare = null;
+    const { grid, turn } = parseFen(state.fen);
+    if (data.legal.length && isCheckFromReport(data)) {
+      state.checkSquare = kingSquare(grid, turn === "w" ? "white" : "black");
+    }
+    showTotals(data.totals);
+    if (data.result) {
+      setStatus(`Game over: ${data.result} (${data.reason})`, "over");
+    } else if (turn === (state.human === "white" ? "w" : "b")) {
+      setStatus("Your move.");
+    }
+  }
+  function isCheckFromReport(data) {
+    // The last SAN written ends with + when the side to move is in check.
+    const last = state.sans[state.sans.length - 1];
+    return Boolean(last && (last.endsWith("+") || last.endsWith("#")));
+  }
+
+  // ---- API -----------------------------------------------------------
+  async function api(path, body) {
+    const response = await fetch(path, {
+      method: body ? "POST" : "GET",
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || response.statusText);
+    return data;
+  }
+  async function newGame(event) {
+    if (event) event.preventDefault();
+    const fen = $("fen").value.trim();
+    state.human = document.querySelector("#color [aria-pressed='true']").dataset.color;
+    state.engineKey = $("engine").value;
+    state.engineLabel = $("engine").selectedOptions[0].textContent;
+    state.flipped = state.human === "black";
+    state.sans = [];
+    state.last = [];
+    state.selected = null;
+    state.evalWhite = 0;
+    state.mateWhite = null;
+    state.session = null;
+    state.busy = true;
+    setStatus("Starting…", "thinking");
+    render();
+    try {
+      const data = await api("/api/new", {
+        engine: state.engineKey,
+        color: state.human,
+        think_ms: Number($("think").value),
+        fen: fen || null,
+      });
+      state.session = data.session;
+      const parsed = data.fen.split(" ");
+      const startParsed = (fen || data.fen).split(" ");
+      state.startTurn = startParsed[1];
+      state.startFullmove = Number(startParsed[5] || 1);
+      void parsed;
+      state.busy = false;
+      applyResponse(data, null);
+    } catch (error) {
+      state.busy = false;
+      setStatus("Could not start: " + error.message, "over");
+    }
+    render();
+  }
+  async function playMove(uci) {
+    const from = uci.slice(0, 2), to = uci.slice(2, 4);
+    state.busy = true;
+    state.selected = null;
+    state.last = [from, to];
+    // optimistic local update of the moved piece so the board answers instantly
+    const { grid } = parseFen(state.fen);
+    const piece = grid[from];
+    delete grid[from];
+    grid[to] = uci.length === 5 ? (piece === piece.toUpperCase() ? uci[4].toUpperCase() : uci[4]) : piece;
+    state.fen = gridToPlacement(grid) + " " + state.fen.split(" ").slice(1).join(" ");
+    state.legal = [];
+    setStatus(`${state.engineLabel} is thinking…`, "thinking");
+    render();
+    try {
+      const data = await api("/api/move", { session: state.session, uci });
+      state.busy = false;
+      applyResponse(data, data.san);
+    } catch (error) {
+      state.busy = false;
+      setStatus("Move rejected: " + error.message, "over");
+    }
+    render();
+  }
+  function gridToPlacement(grid) {
+    const rows = [];
+    for (let rank = 8; rank >= 1; rank--) {
+      let row = "", empty = 0;
+      for (let f = 0; f < 8; f++) {
+        const p = grid[FILES[f] + rank];
+        if (p) { if (empty) { row += empty; empty = 0; } row += p; } else empty += 1;
+      }
+      if (empty) row += empty;
+      rows.push(row);
+    }
+    return rows.join("/");
+  }
+
+  // ---- interaction ---------------------------------------------------
+  function onSquareClick(sq) {
+    if (state.busy || !state.session || state.over) return;
+    const { grid, turn } = parseFen(state.fen);
+    if (turn !== (state.human === "white" ? "w" : "b")) return;
+    const mine = (ch) => ch && ((state.human === "white") === (ch === ch.toUpperCase()));
+    if (state.selected) {
+      const candidates = state.legal.filter((m) => m.startsWith(state.selected + sq));
+      if (candidates.length === 1) { playMove(candidates[0]); return; }
+      if (candidates.length > 1) { openPromotion(candidates); return; }
+    }
+    state.selected = mine(grid[sq]) && state.selected !== sq ? sq : null;
+    render();
+  }
+  function openPromotion(candidates) {
+    const box = $("promo-box");
+    const isWhite = state.human === "white";
+    box.innerHTML = ["q", "r", "b", "n"].map((p) => {
+      const ch = isWhite ? p.toUpperCase() : p;
+      return `<button type="button" data-uci="${candidates[0].slice(0, 4)}${p}" aria-label="promote to ${pieceName(ch)}">${pieceSvg(ch)}</button>`;
+    }).join("");
+    $("promo").dataset.open = "true";
+    box.querySelector("button").focus();
+  }
+  $("promo-box").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-uci]");
+    if (!button) return;
+    $("promo").dataset.open = "false";
+    playMove(button.dataset.uci);
+  });
+  $("promo").addEventListener("click", (event) => {
+    if (event.target === $("promo")) { $("promo").dataset.open = "false"; state.selected = null; render(); }
+  });
+  $("board").addEventListener("click", (event) => {
+    const cell = event.target.closest("[data-sq]");
+    if (cell) onSquareClick(cell.dataset.sq);
+  });
+  $("flip").addEventListener("click", () => { state.flipped = !state.flipped; render(); });
+  $("controls").addEventListener("submit", newGame);
+  $("color").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-color]");
+    if (!button) return;
+    for (const b of $("color").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b === button));
+  });
+
+  // ---- boot ----------------------------------------------------------
+  async function boot() {
+    render();
+    let info = null;
+    for (let attempt = 0; attempt < 90; attempt++) {
+      try {
+        info = await api("/api/info");
+        if (info.ready) break;
+      } catch (error) { /* server still compiling kernels */ }
+      setStatus(`Engines warming up (numba compiles the kernels once, about a minute)… ${attempt * 2}s`, "thinking");
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    if (!info || !info.ready) { setStatus("The engine did not come up. Reload in a minute.", "over"); return; }
+    $("engine").innerHTML = info.engines.map((e) => `<option value="${e.key}">${e.label} · ${si(info.boot_nps[e.key] || 0)} n/s</option>`).join("");
+    $("think").innerHTML = info.think_options_ms.map((ms) => `<option value="${ms}" ${ms === 1000 ? "selected" : ""}>${ms / 1000} s</option>`).join("");
+    $("limits").textContent = info.limits;
+    setStatus("Ready. Pick a side and start a game.");
+    await newGame(null);
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

@@ -12,6 +12,7 @@ dependencies = [
 
 [tool.uv]
 package = false
+default-groups = ["dev", "demo"]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
@@ -23,6 +24,7 @@ explicit = true
 
 [dependency-groups]
 dev = ["mypy>=1.18", "ruff>=0.14", "pytest>=8.3"]
+demo = ["fastapi>=0.115", "uvicorn>=0.30", "huggingface_hub>=0.25"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -50,11 +52,12 @@ files = [
     "harness",
     "tools",
     "tests",
+    "demo",
 ]
 mypy_path = "tests"
 
 [[tool.mypy.overrides]]
-module = ["numba.*", "model", "model.*"]
+module = ["numba.*", "model", "model.*", "huggingface_hub", "huggingface_hub.*"]
 ignore_missing_imports = true
 
 # torch ships huge stubs that crash mypy on descent; treat it as an opaque Any.
